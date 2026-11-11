@@ -20,5 +20,8 @@
   "devDependencies": {
     "expo-router": "~58.0.30",
     "prettier": "^3.5.0"
+  },
+  "dependencies": {
+    "expo-speech": "~58.0.4"
   }
 }
