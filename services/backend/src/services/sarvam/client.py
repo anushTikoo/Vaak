@@ -45,7 +45,7 @@ class SarvamClient:
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             files = {"file": ("recording.m4a", audio_bytes, "audio/m4a")}
             headers = {"api-subscription-key": self.api_key}
-            data = {"language_code": "unknown" if language == "auto" else language, "model": "saaras:v2"}
+            data = {"language_code": "unknown" if language == "auto" else language, "model": "saaras:v4"}
             resp = await http_client.post(
                 "https://api.sarvam.ai/speech-to-text",
                 files=files,
@@ -57,13 +57,15 @@ class SarvamClient:
             return {
                 "transcript": res_json.get("transcript", ""),
                 "detected_language": res_json.get("language_code", "en-IN"),
-                "confidence": 0.98,
+                "confidence": res_json.get("language_probability", 0.98),
                 "is_stub": False,
             }
 
     async def generate_speech(self, text: str, language: str = "en-IN") -> bytes:
         if not self.is_configured:
             return b""
+        import base64
+
         import httpx
 
         async with httpx.AsyncClient(timeout=30.0) as http_client:
@@ -72,11 +74,14 @@ class SarvamClient:
                 "inputs": [text],
                 "target_language_code": language,
                 "speaker": "meera",
-                "model": "bulbul:v2",
+                "model": "bulbul:v4-flash",
             }
             resp = await http_client.post("https://api.sarvam.ai/text-to-speech", headers=headers, json=payload)
             resp.raise_for_status()
-            return resp.content
+            res_data = resp.json()
+            if "audios" in res_data and res_data["audios"]:
+                return base64.b64decode(res_data["audios"][0])
+            return b""
 
 
 sarvam_client = SarvamClient()

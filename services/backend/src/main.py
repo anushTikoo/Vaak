@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import cart, chat, health, me, orders, voice
+from src.api.routes import auth, cart, chat, health, me, orders, voice
 from src.core.config import settings
 from src.core.errors import VaakException, generic_exception_handler, vaak_exception_handler
 
@@ -31,6 +31,7 @@ app.include_router(voice.router)
 app.include_router(chat.router)
 app.include_router(cart.router)
 app.include_router(orders.router)
+app.include_router(auth.router)
 
 # Cloudflare Python Workers ASGI Entrypoint
 try:
