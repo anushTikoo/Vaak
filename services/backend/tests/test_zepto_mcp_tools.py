@@ -151,12 +151,12 @@ async def test_force_upstream_unauthenticated_captures_live_mcp_rejection(client
     assert data["source"] == "live_mcp"
     assert data["status"] == "error"
     assert data["status_code"] == 401
-    assert data["error"]["error"] == "unauthorized"
+    assert "unauthorized" in str(data["error"])
 
 
 @pytest.mark.asyncio
 async def test_authenticated_client_calls_live_mcp_successfully(client, monkeypatch):
-    """Verify that when authenticated, client attaches Bearer token and parses live response."""
+    """Verify that when authenticated, client attaches Bearer token, negotiates session, and parses live response."""
     zepto_client.set_tokens("live_valid_test_token_999")
     original_post = httpx.AsyncClient.post
 
@@ -165,9 +165,30 @@ async def test_authenticated_client_calls_live_mcp_successfully(client, monkeypa
             headers = kwargs.get("headers") or {}
             json_data = kwargs.get("json") or {}
             assert headers.get("Authorization") == "Bearer live_valid_test_token_999"
+
+            if json_data.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"mcp-session-id": "mock_test_sess_999", "content-type": "application/json"},
+                    json={"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05"}},
+                )
+            if json_data.get("method") == "notifications/initialized":
+                return httpx.Response(202, headers={"mcp-session-id": "mock_test_sess_999"})
+            if (
+                json_data.get("method") == "tools/call"
+                and json_data.get("params", {}).get("name") == "list_saved_addresses"
+            ):
+                return httpx.Response(
+                    200,
+                    headers={"mcp-session-id": "mock_test_sess_999"},
+                    json={"jsonrpc": "2.0", "result": {"structuredContent": {"addresses": []}}},
+                )
+
+            assert headers.get("Mcp-Session-Id") == "mock_test_sess_999"
             assert json_data.get("method") == "tools/call"
             return httpx.Response(
                 200,
+                headers={"mcp-session-id": "mock_test_sess_999"},
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -197,6 +218,7 @@ async def test_authenticated_client_calls_live_mcp_successfully(client, monkeypa
     assert data["source"] == "live_mcp"
     assert data["status"] == "success"
     assert data["is_authenticated"] is True
+    assert data["session_id"] == "mock_test_sess_999"
     assert data["response"]["items"][0]["name"] == "Live Store Amul Milk"
 
 

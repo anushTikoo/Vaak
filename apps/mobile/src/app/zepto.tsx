@@ -415,9 +415,19 @@ export default function ZeptoMcpScreen() {
                     </Text>
                   </View>
 
+                  {/* LIVE STORE TEXT OUTPUT PREVIEW */}
+                  {result.response?.content?.[0]?.text && (
+                    <View style={styles.liveContentBox}>
+                      <Text style={styles.liveContentLabel}>🛒 Live Dark Store Output:</Text>
+                      <Text style={styles.liveContentText}>
+                        {result.response.content[0].text}
+                      </Text>
+                    </View>
+                  )}
+
                   {/* RESPONSE PAYLOAD */}
                   <View style={styles.payloadBox}>
-                    <Text style={styles.payloadLabel}>Response Received:</Text>
+                    <Text style={styles.payloadLabel}>Full Response Received (JSON):</Text>
                     <Text style={styles.codeText}>
                       {JSON.stringify(result.response || result.error, null, 2)}
                     </Text>
@@ -839,6 +849,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94A3B8',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  liveContentBox: {
+    backgroundColor: '#0F291E',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  liveContentLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#34D399',
+    marginBottom: 4,
+  },
+  liveContentText: {
+    fontSize: 12,
+    color: '#ECFDF5',
+    lineHeight: 18,
   },
   payloadBox: {
     marginBottom: 10,
