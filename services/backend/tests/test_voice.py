@@ -73,3 +73,27 @@ async def test_transcribe_requires_audio_upload(client):
     response = await client.post("/api/v1/voice/transcribe")
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_transcribe_handles_sarvam_400_bad_request_gracefully(client, monkeypatch):
+    import httpx
+
+    req = httpx.Request("POST", "https://api.sarvam.ai/speech-to-text")
+    resp = httpx.Response(400, request=req, text='{"error":{"message":"Audio duration is 0, please check the audio."}}')
+    error = httpx.HTTPStatusError("Client error 400 Bad Request", request=req, response=resp)
+
+    transcribe = AsyncMock(side_effect=error)
+    monkeypatch.setattr(sarvam_client, "transcribe_audio", transcribe)
+
+    response = await client.post(
+        "/api/v1/voice/transcribe",
+        files={"audio": ("empty.m4a", b"", "audio/mp4")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transcript"] == ""
+    assert data["confidence"] == 0.0
+    assert data["detected_language"] == "en-IN"
+    UUID(data["session_id"])
