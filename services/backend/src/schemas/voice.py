@@ -19,3 +19,13 @@ class TranscribeResponse(BaseModel):
     transcript: str
     detected_language: str | None = None
     confidence: float = 0.0
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Text to synthesize to speech")
+    language: str = Field(default="en-IN", description="Target spoken language code")
+
+
+class TTSResponse(BaseModel):
+    audio_base64: str
+    format: str = "wav"

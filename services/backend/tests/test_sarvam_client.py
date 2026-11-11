@@ -157,3 +157,35 @@ async def test_configured_tts_propagates_provider_http_errors(monkeypatch):
 
     with pytest.raises(httpx.HTTPStatusError):
         await sarvam_client.generate_speech("hello")
+
+
+@pytest.mark.asyncio
+async def test_configured_stt_aborts_on_empty_or_zero_duration_audio_without_calling_api(monkeypatch):
+    import io
+    import wave
+
+    requests = []
+
+    async def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"transcript": "should not be reached"})
+
+    install_mock_http_client(monkeypatch, handler)
+    monkeypatch.setattr(sarvam_client, "api_key", "test-subscription-key")
+
+    # 1. Empty bytes -> Must NOT call Sarvam API
+    result_empty = await sarvam_client.transcribe_audio(b"")
+    assert result_empty["transcript"] == ""
+    assert len(requests) == 0
+
+    # 2. Zero-duration audio container -> Must NOT call Sarvam API
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"")
+
+    result_zero = await sarvam_client.transcribe_audio(buf.getvalue())
+    assert result_zero["transcript"] == ""
+    assert len(requests) == 0

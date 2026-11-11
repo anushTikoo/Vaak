@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   useAudioRecorder,
   useAudioRecorderState,
@@ -22,10 +22,21 @@ export interface UseVoiceRecorderResult {
 export function useVoiceRecorder(): UseVoiceRecorderResult {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [lastRecordedUri, setLastRecordedUri] = useState<string | null>(null);
+  const [lastRecordedDuration, setLastRecordedDuration] = useState<number>(0);
   const isStartingRef = useRef(false);
+  const recordingStartTimeRef = useRef<number | null>(null);
+  const isRecordingRef = useRef(false);
 
-  // Initialize expo-audio recorder with high quality preset
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  // Initialize expo-audio recorder with high quality preset and active metering
+  const recordingOptions = useMemo(
+    () => ({
+      ...RecordingPresets.HIGH_QUALITY,
+      isMeteringEnabled: true,
+    }),
+    []
+  );
+
+  const recorder = useAudioRecorder(recordingOptions);
   const state = useAudioRecorderState(recorder, 100);
 
   // Check initial permissions
@@ -70,49 +81,73 @@ export function useVoiceRecorder(): UseVoiceRecorderResult {
       }
 
       setLastRecordedUri(null);
+      setLastRecordedDuration(0);
       await recorder.prepareToRecordAsync();
       recorder.record();
+      isRecordingRef.current = true;
+      recordingStartTimeRef.current = Date.now();
     } catch (err) {
       console.error('Failed to start audio recording:', err);
+      isRecordingRef.current = false;
     } finally {
       isStartingRef.current = false;
     }
   }, [hasPermission, requestPermission, recorder, state.isRecording]);
 
   const stopRecording = useCallback(async (): Promise<string | null> => {
-    if (!state.isRecording) {
+    if (!isRecordingRef.current && !state.isRecording) {
       return lastRecordedUri;
     }
 
     try {
-      await recorder.stop();
+      // Ensure minimum recording duration on Android to avoid MediaRecorder "stop failed"
+      if (recordingStartTimeRef.current) {
+        const elapsed = Date.now() - recordingStartTimeRef.current;
+        if (elapsed < 600) {
+          await new Promise((resolve) => setTimeout(resolve, 600 - elapsed));
+        }
+      }
+
+      const stopResult = (await recorder.stop()) as { url?: string; durationMillis?: number } | undefined;
       // Wait for Android MediaRecorder to finalize audio container writing
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      const uri = recorder.uri;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const finalDuration =
+        stopResult?.durationMillis ||
+        (recordingStartTimeRef.current ? Date.now() - recordingStartTimeRef.current : 0);
+      setLastRecordedDuration(finalDuration);
+
+      const uri = stopResult?.url || recorder.uri;
       setLastRecordedUri(uri);
       return uri;
     } catch (err) {
       console.error('Failed to stop recording:', err);
       return null;
+    } finally {
+      isRecordingRef.current = false;
+      recordingStartTimeRef.current = null;
     }
   }, [recorder, state.isRecording, lastRecordedUri]);
 
   const cancelRecording = useCallback(async () => {
-    if (state.isRecording) {
+    if (isRecordingRef.current || state.isRecording) {
       try {
         await recorder.stop();
       } catch (err) {
         console.warn('Error cancelling recording:', err);
       }
     }
+    isRecordingRef.current = false;
     setLastRecordedUri(null);
+    setLastRecordedDuration(0);
+    recordingStartTimeRef.current = null;
   }, [recorder, state.isRecording]);
 
   return {
     isRecording: state.isRecording,
     hasPermission,
     recordedUri: lastRecordedUri || recorder.uri || null,
-    durationMillis: state.durationMillis || 0,
+    durationMillis: state.isRecording ? state.durationMillis || 0 : lastRecordedDuration,
     metering: state.metering,
     startRecording,
     stopRecording,

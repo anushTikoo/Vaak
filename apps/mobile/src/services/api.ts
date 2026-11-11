@@ -20,6 +20,7 @@ export interface ChatResponse {
   reply_text: string;
   suggested_products: ProductCardData[];
   action_type: string;
+  detected_language?: string;
 }
 
 export interface CartItemData {
@@ -61,7 +62,7 @@ export class VaakApi {
     }
   }
 
-  static async sendChatMessage(message: string, sessionId?: string): Promise<ChatResponse> {
+  static async sendChatMessage(message: string, sessionId?: string, language: string = 'auto'): Promise<ChatResponse> {
     const response = await fetch(`${API_BASE_URL}/api/v1/chat/message`, {
       method: 'POST',
       headers: {
@@ -70,7 +71,7 @@ export class VaakApi {
       body: JSON.stringify({
         message,
         session_id: sessionId || null,
-        language: 'auto',
+        language: language || 'auto',
       }),
     });
 
@@ -81,8 +82,61 @@ export class VaakApi {
     return await response.json();
   }
 
+  static async textToSpeech(text: string, language: string = 'en-IN'): Promise<{ audio_base64: string; format: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/voice/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text,
+        language,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`TTS API error: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  static async getAudioFileSize(audioUri: string): Promise<number | null> {
+    try {
+      if (Platform.OS === 'web') {
+        const res = await fetch(audioUri);
+        const blob = await res.blob();
+        return blob.size;
+      }
+      if (typeof LegacyFileSystem?.getInfoAsync === 'function') {
+        const info = await LegacyFileSystem.getInfoAsync(audioUri);
+        return info.exists && info.size !== undefined ? info.size : null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   static async uploadAudio(audioUri: string): Promise<TranscribeResponse> {
     const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe`;
+
+    // 0. Pre-validate audio file size on device (empty M4A header is ~258 bytes)
+    if (Platform.OS !== 'web' && typeof LegacyFileSystem?.getInfoAsync === 'function') {
+      try {
+        const info = await LegacyFileSystem.getInfoAsync(audioUri);
+        if (!info.exists || (info.size !== undefined && info.size < 300)) {
+          console.warn('Recorded audio file is missing or zero duration (< 300 bytes):', info);
+          return {
+            session_id: '',
+            transcript: '',
+            confidence: 0,
+          };
+        }
+      } catch (checkErr) {
+        console.warn('Could not inspect audio file size prior to upload:', checkErr);
+      }
+    }
 
     // 1. Try native LegacyFileSystem.uploadAsync (native Android OkHttp stream, bypasses WinterCG FormData)
     if (Platform.OS !== 'web' && typeof LegacyFileSystem?.uploadAsync === 'function') {
@@ -130,9 +184,19 @@ export class VaakApi {
     }
 
     // 3. Web fallback
-    const formData = new FormData();
     const blob = await (await fetch(audioUri)).blob();
-    formData.append('audio', blob, 'recording.m4a');
+    if (!blob || blob.size < 300) {
+      console.warn('Recorded web audio blob is empty or zero duration (< 300 bytes):', blob?.size);
+      return {
+        session_id: '',
+        transcript: '',
+        confidence: 0,
+      };
+    }
+    const formData = new FormData();
+    const isWebm = blob.type ? blob.type.includes('webm') : true;
+    const filename = isWebm ? 'recording.webm' : 'recording.m4a';
+    formData.append('audio', blob, filename);
 
     const response = await fetch(uploadUrl, {
       method: 'POST',

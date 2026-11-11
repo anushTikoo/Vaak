@@ -23,3 +23,4 @@ class ChatMessageResponse(BaseModel):
     reply_text: str
     suggested_products: list[ProductCard] = Field(default_factory=list)
     action_type: str = "none"  # "none", "cart_updated", "clarification_needed", "order_confirmation_requested"
+    detected_language: str = "en-IN"
