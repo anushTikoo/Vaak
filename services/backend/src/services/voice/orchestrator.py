@@ -8,9 +8,7 @@ from src.services.zepto.client import zepto_client
 class VoiceOrchestrator:
     """Central conversational orchestrator bridging STT, Intent/LLM, and Zepto Commerce."""
 
-    async def process_user_intent(
-        self, user_message: str, session_id: UUID | None = None
-    ) -> ChatMessageResponse:
+    async def process_user_intent(self, user_message: str, session_id: UUID | None = None) -> ChatMessageResponse:
         logger.info(f"Processing conversational intent for message: '{user_message}'")
 
         # Query Zepto catalog for matching products

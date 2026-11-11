@@ -31,7 +31,5 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
     logger.error(f"Unhandled error processing {request.url.path}: {str(exc)}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": {"code": "INTERNAL_SERVER_ERROR", "message": "An unexpected error occurred."}
-        },
+        content={"error": {"code": "INTERNAL_SERVER_ERROR", "message": "An unexpected error occurred."}},
     )

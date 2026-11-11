@@ -1,180 +1,402 @@
-import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { VaakApi, CartData } from '@/services/api';
 
-import { ExternalLink } from '@/components/external-link';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Collapsible } from '@/components/ui/collapsible';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
-
-export default function TabTwoScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
-  const theme = useTheme();
-
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
-    },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
-    },
+export default function CartScreen() {
+  const [cart, setCart] = useState<CartData>({
+    items: [],
+    currency: 'INR',
+    subtotal: 0,
+    total_items: 0,
   });
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const fetchCart = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await VaakApi.getCart();
+      setCart(data);
+    } catch (err) {
+      console.error('Failed to load cart:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchCart();
+  }, [fetchCart]);
+
+  const handleUpdateQuantity = async (itemId: string, newQty: number) => {
+    try {
+      const updated = await VaakApi.updateCartItem(itemId, newQty);
+      setCart(updated);
+    } catch (err) {
+      console.error('Failed to update quantity:', err);
+    }
+  };
+
+  const handleRemove = async (itemId: string) => {
+    try {
+      const updated = await VaakApi.deleteCartItem(itemId);
+      setCart(updated);
+    } catch (err) {
+      console.error('Failed to remove item:', err);
+    }
+  };
+
+  const handleExplicitConfirmation = () => {
+    if (cart.items.length === 0) {
+      Alert.alert('Cart is empty', 'Add some grocery items using voice or search first.');
+      return;
+    }
+
+    Alert.alert(
+      'Explicit Order Confirmation',
+      `You are confirming an order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+        2
+      )} via Zepto.\n\nNever silently place an order without your review.\n\nProceed with simulated order placement?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm & Place Order',
+          onPress: async () => {
+            setIsSubmitting(true);
+            setTimeout(() => {
+              setIsSubmitting(false);
+              Alert.alert(
+                'Order Received by Zepto (Simulated)',
+                `Order total ₹${cart.subtotal.toFixed(2)} recorded.\nEstimated delivery: 10 mins.`
+              );
+            }, 1200);
+          },
+        },
+      ]
+    );
+  };
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Explore</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
-          </ThemedText>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Your Grocery Cart</Text>
+        <TouchableOpacity onPress={fetchCart} style={styles.refreshButton}>
+          <Text style={styles.refreshText}>↻ Refresh</Text>
+        </TouchableOpacity>
+      </View>
 
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
-            </Pressable>
-          </ExternalLink>
-        </ThemedView>
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#6366F1" />
+          <Text style={styles.loadingText}>Fetching cart from Vaak engine...</Text>
+        </View>
+      ) : cart.items.length === 0 ? (
+        <View style={styles.centerContainer}>
+          <Text style={styles.emptyCartIcon}>🛒</Text>
+          <Text style={styles.emptyTitle}>Your cart is empty</Text>
+          <Text style={styles.emptySubtitle}>
+            Go to the Voice tab and speak: "I need milk, eggs, and bread"
+          </Text>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {cart.items.map((item) => (
+            <View key={item.id} style={styles.itemCard}>
+              <View style={styles.itemHeader}>
+                <View style={styles.itemMain}>
+                  <Text style={styles.itemName}>{item.name}</Text>
+                  {item.pack_size && <Text style={styles.itemPack}>{item.pack_size}</Text>}
+                  <Text style={styles.itemPrice}>₹{item.unit_price.toFixed(2)} / unit</Text>
+                </View>
+                <TouchableOpacity onPress={() => handleRemove(item.id)} style={styles.deleteButton}>
+                  <Text style={styles.deleteText}>✕</Text>
+                </TouchableOpacity>
+              </View>
 
-        <ThemedView style={styles.sectionsWrapper}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/explore.tsx</ThemedText>
-            </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+              <View style={styles.itemFooter}>
+                <View style={styles.quantityControls}>
+                  <TouchableOpacity
+                    style={styles.qtyButton}
+                    onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)}
+                  >
+                    <Text style={styles.qtyButtonText}>-</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.qtyText}>{item.quantity}</Text>
+                  <TouchableOpacity
+                    style={styles.qtyButton}
+                    onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}
+                  >
+                    <Text style={styles.qtyButtonText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.totalPrice}>₹{(item.quantity * item.unit_price).toFixed(2)}</Text>
+              </View>
+            </View>
+          ))}
 
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
-              </ThemedText>
-              <Image
-                source={require('@/assets/images/tutorial-web.png')}
-                style={styles.imageTutorial}
-              />
-            </ThemedView>
-          </Collapsible>
+          {/* Bill Summary */}
+          <View style={styles.billCard}>
+            <Text style={styles.billTitle}>Bill Summary</Text>
+            <View style={styles.billRow}>
+              <Text style={styles.billLabel}>Item Total</Text>
+              <Text style={styles.billValue}>₹{cart.subtotal.toFixed(2)}</Text>
+            </View>
+            <View style={styles.billRow}>
+              <Text style={styles.billLabel}>Delivery Fee</Text>
+              <Text style={[styles.billValue, { color: '#10B981' }]}>FREE</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.billRow}>
+              <Text style={styles.grandTotalLabel}>To Pay</Text>
+              <Text style={styles.grandTotalValue}>₹{cart.subtotal.toFixed(2)}</Text>
+            </View>
+          </View>
 
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/react-logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
+          {/* Philosophy Note */}
+          <View style={styles.philosophyBox}>
+            <Text style={styles.philosophyText}>
+              🛡️ <Text style={{ fontWeight: '700' }}>Voice-first, never voice-only</Text>: We require your visual review and explicit tap confirmation before placing any order.
+            </Text>
+          </View>
 
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-        {Platform.OS === 'web' && <WebBadge />}
-      </ThemedView>
-    </ScrollView>
+          {/* Confirm Order Button */}
+          <TouchableOpacity
+            style={styles.confirmButton}
+            onPress={handleExplicitConfirmation}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.confirmButtonText}>
+                Confirm Order (₹{cart.subtotal.toFixed(2)}) →
+              </Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
   container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
+    flex: 1,
+    backgroundColor: '#0F172A',
   },
-  titleContainer: {
-    gap: Spacing.three,
-    alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-  },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
+  header: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  refreshButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#1E293B',
+    borderRadius: 8,
+  },
+  refreshText: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  centerContainer: {
+    flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.one,
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    color: '#94A3B8',
+    fontSize: 14,
+  },
+  emptyCartIcon: {
+    fontSize: 54,
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  itemCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  itemMain: {
+    flex: 1,
+    marginRight: 10,
+  },
+  itemName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  itemPack: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  itemPrice: {
+    fontSize: 13,
+    color: '#CBD5E1',
+    marginTop: 4,
+  },
+  deleteButton: {
+    padding: 6,
+  },
+  deleteText: {
+    fontSize: 14,
+    color: '#94A3B8',
+  },
+  itemFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
   },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  collapsibleContent: {
+  quantityControls: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  imageTutorial: {
-    width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.two,
+  qtyButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  imageReact: {
-    width: 100,
-    height: 100,
-    alignSelf: 'center',
+  qtyButtonText: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  qtyText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+  },
+  totalPrice: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#10B981',
+  },
+  billCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  billTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  billRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  billLabel: {
+    fontSize: 13,
+    color: '#94A3B8',
+  },
+  billValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#F8FAFC',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#334155',
+    marginVertical: 10,
+  },
+  grandTotalLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  grandTotalValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#10B981',
+  },
+  philosophyBox: {
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderRadius: 10,
+    padding: 12,
+    marginVertical: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  philosophyText: {
+    fontSize: 12,
+    color: '#A5B4FC',
+    lineHeight: 18,
+  },
+  confirmButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });

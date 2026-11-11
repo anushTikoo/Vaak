@@ -17,9 +17,7 @@ class SarvamClient:
 
     async def transcribe_audio(self, audio_bytes: bytes, language: str = "auto") -> dict:
         if not self.is_configured:
-            logger.info(
-                "SarvamClient is in development mode (no production API key). Returning stub."
-            )
+            logger.info("SarvamClient is in development mode (no production API key). Returning stub.")
             return {
                 "transcript": "I need two litres of milk and six eggs",
                 "detected_language": "en-IN",
@@ -27,16 +25,12 @@ class SarvamClient:
                 "is_stub": True,
             }
         # Real integration will stream to Sarvam STT WebSocket / REST endpoint
-        raise NotImplementedError(
-            "Sarvam live STT endpoint connection pending production credentials"
-        )
+        raise NotImplementedError("Sarvam live STT endpoint connection pending production credentials")
 
     async def generate_speech(self, text: str, language: str = "en-IN") -> bytes:
         if not self.is_configured:
             return b""
-        raise NotImplementedError(
-            "Sarvam live TTS endpoint connection pending production credentials"
-        )
+        raise NotImplementedError("Sarvam live TTS endpoint connection pending production credentials")
 
 
 sarvam_client = SarvamClient()
