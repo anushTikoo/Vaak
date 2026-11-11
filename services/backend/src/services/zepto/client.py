@@ -81,11 +81,11 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "product_id": {"type": "string", "description": "Product ID or variant ID"},
+                "product_variant_id": {"type": "string", "description": "Unique product variant UUID"},
             },
-            "required": ["product_id"],
+            "required": ["product_variant_id"],
         },
-        "default_input": {"product_id": "z_milk_toned_1l"},
+        "default_input": {"product_variant_id": "23037033-b0ab-4109-82b6-30f3a2a2cf84"},
     },
     {
         "name": "list_saved_addresses",
@@ -104,11 +104,11 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "addressId": {"type": "string", "description": "Saved address ID"},
+                "addressId": {"type": "string", "description": "Saved address ID UUID"},
             },
             "required": ["addressId"],
         },
-        "default_input": {"addressId": "default_home_address"},
+        "default_input": {"addressId": "542e3f92-a25d-4092-96fb-6ce406534a56"},
     },
     {
         "name": "get_location_serviceability",
@@ -117,11 +117,12 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "pincode": {"type": "string", "description": "6-digit Indian PIN code", "default": "400014"},
+                "latitude": {"type": "number", "description": "Latitude coordinate", "default": 19.0191},
+                "longitude": {"type": "number", "description": "Longitude coordinate", "default": 72.8552},
             },
-            "required": ["pincode"],
+            "required": ["latitude", "longitude"],
         },
-        "default_input": {"pincode": "400014"},
+        "default_input": {"latitude": 19.0191, "longitude": 72.8552},
     },
     {
         "name": "get_user_details",
@@ -160,12 +161,12 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "product_id": {"type": "string", "description": "Product SKU ID"},
+                "product_id": {"type": "string", "description": "Product SKU / Variant UUID"},
                 "quantity": {"type": "integer", "description": "Number of units to add", "default": 1},
             },
             "required": ["product_id"],
         },
-        "default_input": {"product_id": "z_eggs_6pk", "quantity": 2},
+        "default_input": {"product_id": "23037033-b0ab-4109-82b6-30f3a2a2cf84", "quantity": 1},
     },
     {
         "name": "update_cart",
@@ -174,12 +175,12 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "item_id": {"type": "string", "description": "Cart item ID or product SKU"},
+                "productVariantId": {"type": "string", "description": "Product variant UUID"},
                 "quantity": {"type": "integer", "description": "New unit count", "default": 1},
             },
-            "required": ["item_id", "quantity"],
+            "required": ["productVariantId", "quantity"],
         },
-        "default_input": {"item_id": "z_eggs_6pk", "quantity": 2},
+        "default_input": {"productVariantId": "23037033-b0ab-4109-82b6-30f3a2a2cf84", "quantity": 1},
     },
     {
         "name": "remove_from_cart",
@@ -243,7 +244,7 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
             "required": ["order_id"],
         },
-        "default_input": {"order_id": "z_ord_882910"},
+        "default_input": {"order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"},
     },
     {
         "name": "list_orders",
@@ -293,7 +294,7 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
             "required": ["orderId"],
         },
-        "default_input": {"orderId": "z_ord_882910"},
+        "default_input": {"orderId": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"},
     },
     {
         "name": "list_order_history",
@@ -330,6 +331,7 @@ class ZeptoMCPClient:
         self.session_id: str | None = None
         self.selected_address_id: str | None = None
         self.selected_store_id: str | None = None
+        self.device_id: str = "vaak-app-client-560038"
 
         # Only load persisted token in live server runtime, not during pytest test runs
         if "pytest" not in sys.modules:
@@ -480,29 +482,76 @@ class ZeptoMCPClient:
 
     def _resolve_tool_mapping(self, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Map generic / legacy tool calls to official Zepto MCP server tool names and parameters."""
-        # Mapping aliases
+        if name == "get_product_details":
+            pvid = args.get("product_variant_id") or args.get("product_id") or args.get("productVariantId")
+            if not pvid or pvid == "z_milk_toned_1l":
+                pvid = "23037033-b0ab-4109-82b6-30f3a2a2cf84"
+            return "get_product_details", {"product_variant_id": str(pvid)}
+
+        if name == "select_saved_address":
+            addr_id = args.get("addressId") or args.get("address_id")
+            if not addr_id or addr_id == "default_home_address":
+                addr_id = self.selected_address_id or "542e3f92-a25d-4092-96fb-6ce406534a56"
+            return "select_saved_address", {"addressId": str(addr_id)}
+
+        if name in ("get_location_serviceability", "search_location"):
+            lat = args.get("latitude")
+            lng = args.get("longitude")
+            if lat is None or lng is None:
+                lat = 19.0191
+                lng = 72.8552
+            return "get_location_serviceability", {"latitude": float(lat), "longitude": float(lng)}
+
+        if name in ("update_cart", "add_to_cart", "remove_from_cart"):
+            if "cartItems" in args:
+                cart_items = args["cartItems"]
+            else:
+                pvid = (
+                    args.get("product_variant_id")
+                    or args.get("productVariantId")
+                    or args.get("product_id")
+                    or args.get("item_id")
+                )
+                if not pvid or str(pvid).startswith("z_"):
+                    pvid = "23037033-b0ab-4109-82b6-30f3a2a2cf84"
+
+                spid = (
+                    args.get("store_product_id")
+                    or args.get("storeProductId")
+                    or "40d390a2-4c76-59b8-bd4d-8251dd165eca"
+                )
+                qty = 0 if name == "remove_from_cart" else int(args.get("quantity", 1))
+                cart_items = [{
+                    "productVariantId": str(pvid),
+                    "storeProductId": str(spid),
+                    "quantity": qty,
+                }]
+
+            device_id = args.get("deviceId") or self.device_id
+            return "update_cart", {
+                "deviceId": device_id,
+                "cartItems": cart_items,
+                "replaceCart": bool(args.get("replaceCart", False)),
+            }
+
         if name in ("get_cart", "cart"):
             return "view_cart", {}
-        if name == "search_location":
-            if "pincode" in args:
-                return "get_location_serviceability", {"pincode": str(args["pincode"])}
-            return "list_saved_addresses", {}
+
         if name in ("place_order", "checkout"):
             return "create_order", {
                 "confirmOrder": bool(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
             }
-        if name in ("get_order_status", "track_order"):
-            return "get_order_detail", {"orderId": args.get("order_id", args.get("orderId", "z_ord_882910"))}
+
+        if name in ("get_order_status", "track_order", "get_order_detail"):
+            order_id = args.get("orderId") or args.get("order_id")
+            if not order_id or order_id == "z_ord_882910":
+                order_id = "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"
+            return "get_order_detail", {"orderId": str(order_id)}
+
         if name in ("list_orders", "order_history"):
             return "list_order_history", {"limit": args.get("limit", 5)}
-        if name == "add_to_cart":
-            pid = args.get("product_id", args.get("productVariantId", "z_eggs_6pk"))
-            qty = args.get("quantity", 1)
-            return "update_cart", {"items": [{"productVariantId": pid, "quantity": qty}]}
-        if name == "remove_from_cart":
-            item_id = args.get("item_id", args.get("product_id", "z_eggs_6pk"))
-            return "update_cart", {"items": [{"productVariantId": item_id, "quantity": 0}]}
+
         if name == "clear_cart":
             return "view_cart", {}
 
@@ -793,7 +842,11 @@ class ZeptoMCPClient:
             }
 
         elif name == "get_product_details":
-            product_id = str(args.get("product_id", args.get("productVariantId", "z_milk_toned_1l")))
+            product_id = str(
+                args.get("product_variant_id")
+                or args.get("product_id")
+                or args.get("productVariantId", "23037033-b0ab-4109-82b6-30f3a2a2cf84")
+            )
             return {
                 "product_id": product_id,
                 "name": "Amul Taaza Toned Fresh Milk",
@@ -857,7 +910,11 @@ class ZeptoMCPClient:
             }
 
         elif name == "update_cart":
-            item_id = str(args.get("item_id", "z_eggs_6pk"))
+            item_id = str(
+                args.get("productVariantId")
+                or args.get("item_id")
+                or args.get("product_id", "23037033-b0ab-4109-82b6-30f3a2a2cf84")
+            )
             qty = int(args.get("quantity", 1))
             return {
                 "status": "success",

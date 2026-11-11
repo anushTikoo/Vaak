@@ -78,7 +78,8 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
         assert "serving_store" in resp
         assert len(resp["items"]) > 0
     elif tool_name == "get_product_details":
-        assert resp["product_id"] == input_args.get("product_id")
+        expected_pid = input_args.get("product_variant_id") or input_args.get("product_id")
+        assert resp["product_id"] == expected_pid
         assert "price" in resp
         assert "available_stock" in resp
     elif tool_name == "get_cart":
@@ -89,7 +90,8 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
         assert resp["item"]["product_id"] == input_args["product_id"]
     elif tool_name in ("update_cart", "remove_from_cart"):
         assert resp["status"] == "success"
-        assert resp["item_id"] == input_args["item_id"]
+        expected_id = input_args.get("productVariantId") or input_args.get("item_id")
+        assert resp["item_id"] == expected_id
     elif tool_name == "clear_cart":
         assert resp["status"] == "success"
     elif tool_name == "search_location":
