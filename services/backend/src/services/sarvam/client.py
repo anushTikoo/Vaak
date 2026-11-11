@@ -10,6 +10,8 @@ class SarvamClient:
         self.stt_endpoint = settings.SARVAM_STT_ENDPOINT
         self.tts_endpoint = settings.SARVAM_TTS_ENDPOINT
         self.model = settings.SARVAM_LLM_MODEL
+        # Turn counter for realistic multi-turn conversational progression in development
+        self._dev_turn_index = 0
 
     @property
     def is_configured(self) -> bool:
@@ -17,20 +19,64 @@ class SarvamClient:
 
     async def transcribe_audio(self, audio_bytes: bytes, language: str = "auto") -> dict:
         if not self.is_configured:
-            logger.info("SarvamClient is in development mode (no production API key). Returning stub.")
+            # Simulate natural conversational dialogue progression across consecutive recordings
+            dev_dialogue_turns = [
+                "I need two litres of milk and six eggs",
+                "Yes, add them to my cart",
+                "Place order",
+            ]
+            chosen_transcript = dev_dialogue_turns[self._dev_turn_index % len(dev_dialogue_turns)]
+            self._dev_turn_index += 1
+
+            logger.info(
+                f"SarvamClient (Dev Mode): Simulated Turn {self._dev_turn_index} -> '{chosen_transcript}' "
+                f"({len(audio_bytes)} bytes received)"
+            )
             return {
-                "transcript": "I need two litres of milk and six eggs",
+                "transcript": chosen_transcript,
                 "detected_language": "en-IN",
                 "confidence": 0.95,
                 "is_stub": True,
             }
-        # Real integration will stream to Sarvam STT WebSocket / REST endpoint
-        raise NotImplementedError("Sarvam live STT endpoint connection pending production credentials")
+
+        # Real production integration via Sarvam AI REST / WebSocket API
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            files = {"file": ("recording.m4a", audio_bytes, "audio/m4a")}
+            headers = {"api-subscription-key": self.api_key}
+            data = {"language_code": "unknown" if language == "auto" else language, "model": "saaras:v2"}
+            resp = await http_client.post(
+                "https://api.sarvam.ai/speech-to-text",
+                files=files,
+                headers=headers,
+                data=data,
+            )
+            resp.raise_for_status()
+            res_json = resp.json()
+            return {
+                "transcript": res_json.get("transcript", ""),
+                "detected_language": res_json.get("language_code", "en-IN"),
+                "confidence": 0.98,
+                "is_stub": False,
+            }
 
     async def generate_speech(self, text: str, language: str = "en-IN") -> bytes:
         if not self.is_configured:
             return b""
-        raise NotImplementedError("Sarvam live TTS endpoint connection pending production credentials")
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            headers = {"api-subscription-key": self.api_key, "Content-Type": "application/json"}
+            payload = {
+                "inputs": [text],
+                "target_language_code": language,
+                "speaker": "meera",
+                "model": "bulbul:v2",
+            }
+            resp = await http_client.post("https://api.sarvam.ai/text-to-speech", headers=headers, json=payload)
+            resp.raise_for_status()
+            return resp.content
 
 
 sarvam_client = SarvamClient()

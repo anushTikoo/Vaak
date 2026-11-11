@@ -45,15 +45,20 @@ export default function VoiceHomeScreen() {
   const activeAudioPlayerRef = useRef<AudioPlayer | null>(null);
   const activeSessionIdRef = useRef<string | undefined>(undefined);
 
-  // Speak assistant text using Indian accent TTS
-  const speakAssistant = useCallback((text: string) => {
+  // Speak assistant text using Indian accent TTS at full volume
+  const speakAssistant = useCallback(async (text: string) => {
     if (!isVoiceFeedbackEnabled) return;
     try {
       Speech.stop();
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+      });
       Speech.speak(text, {
         language: 'en-IN',
         pitch: 1.0,
         rate: 0.95,
+        volume: 1.0,
       });
     } catch (err) {
       console.warn('Speech synthesis error:', err);
