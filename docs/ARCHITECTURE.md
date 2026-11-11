@@ -1,9 +1,9 @@
-# Vāk (वाक्) — System Architecture
+# Vaak (वाक्) — System Architecture
 
 ## 1. High-Level System Architecture
 
 ```text
-              Vāk Mobile App
+              Vaak Mobile App
        (React Native + Expo SDK 58)
                     │
             HTTPS / WebSocket
@@ -33,13 +33,13 @@
    - All financial logic, price calculations, cart quantity constraints, and order state machines are enforced deterministically in the FastAPI backend.
 
 3. **Strict Credential & Network Isolation**:
-   - The mobile application connects solely to the Vāk backend.
+   - The mobile application connects solely to the Vaak backend.
    - Zero API keys (Sarvam), database strings (Neon), or merchant tokens (Zepto OAuth) ever touch the mobile client.
 
 ## 3. Directory Structure
 
 ```text
-vak/
+vaak/
 ├── apps/
 │   └── mobile/                # React Native / Expo application
 │       ├── app/               # Expo Router file-based routes

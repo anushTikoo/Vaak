@@ -1,4 +1,4 @@
-# Vāk (वाक्) — Cloudflare & Deployment Guide
+# Vaak (वाक्) — Cloudflare & Deployment Guide
 
 This guide documents the setup process for Cloudflare Python Workers, Neon PostgreSQL, and Cloudflare Hyperdrive.
 
@@ -38,7 +38,7 @@ The backend uses Cloudflare's official Python Workers runtime with FastAPI ASGI 
    `postgres://[user]:[password]@[neon-host]/[dbname]?sslmode=require`
 3. Configure Cloudflare Hyperdrive:
    ```bash
-   npx wrangler hyperdrive create vak-db-hyperdrive \
+   npx wrangler hyperdrive create vaak-db-hyperdrive \
      --connection-string="postgres://[user]:[password]@[neon-host]/[dbname]?sslmode=require"
    ```
 4. Bind the Hyperdrive ID into `wrangler.jsonc`:

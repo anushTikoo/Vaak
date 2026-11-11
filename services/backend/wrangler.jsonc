@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vak-backend",
+  "name": "vaak-backend",
   "main": "src/main.py",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": [

@@ -1,4 +1,4 @@
-# Vāk (वाक्) — API Interface Contracts
+# Vaak (वाक्) — API Interface Contracts
 
 All endpoints are hosted by the FastAPI backend on Cloudflare Python Workers.
 
@@ -14,7 +14,7 @@ Returns root container / worker health.
 ```json
 {
   "status": "healthy",
-  "service": "vak-backend",
+  "service": "vaak-backend",
   "environment": "development"
 }
 ```

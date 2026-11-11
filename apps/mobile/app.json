@@ -1,21 +1,21 @@
 {
   "expo": {
-    "name": "Vāk",
-    "slug": "vak",
+    "name": "Vaak",
+    "slug": "vaak",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "vak",
+    "scheme": "vaak",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.vak.app",
+      "bundleIdentifier": "com.vaak.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Vāk requires microphone access to understand your voice commands for grocery ordering."
+        "NSMicrophoneUsageDescription": "Vaak requires microphone access to understand your voice commands for grocery ordering."
       }
     },
     "android": {
-      "package": "com.vak.app",
+      "package": "com.vaak.app",
       "permissions": [
         "RECORD_AUDIO",
         "INTERNET"
