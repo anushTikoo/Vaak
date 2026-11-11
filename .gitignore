@@ -61,6 +61,8 @@ htmlcov/
 *.pem
 *.key
 *.cert
+.zepto_token.json
+services/backend/.zepto_token.json
 
 # VS Code local state
 .vscode/.ropeproject
