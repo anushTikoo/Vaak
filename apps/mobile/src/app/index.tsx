@@ -168,7 +168,7 @@ export default function VoiceHomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.appTitle}>Vāk (वाक्)</Text>
+            <Text style={styles.appTitle}>Vaak (वाक्)</Text>
             <Text style={styles.subtitle}>Voice Grocery Shopping • Zepto</Text>
           </View>
           <TouchableOpacity onPress={checkBackend} style={styles.statusPill}>
