@@ -117,6 +117,13 @@ export default function VoiceHomeScreen() {
           setTranscript(result.transcript);
           activeSessionIdRef.current = result.session_id;
 
+          if (!result.transcript || result.transcript.trim() === '') {
+            const noAudioMsg = "I couldn't hear any speech clearly. Please tap the mic and speak your order.";
+            setAssistantReply(noAudioMsg);
+            speakAssistant(noAudioMsg);
+            return;
+          }
+
           const lowerText = result.transcript.toLowerCase().trim();
 
           // 1. Check if user is confirming addition of suggested products via voice
