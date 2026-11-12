@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from src.core.config import settings
 from src.core.logging import logger
-from src.schemas.chat import ChatMessageResponse, ProductCard
+from src.schemas.chat import ChatMessageResponse, ProductCard, ToolExecutionLog
 from src.services.sarvam.client import sarvam_client
 from src.services.zepto.client import zepto_client
 
@@ -269,6 +269,7 @@ class VoiceOrchestrator:
         action_type = "none"
         order_guardrail_active = False
         tools_invoked: list[str] = []
+        tool_logs: list[ToolExecutionLog] = []
 
         # 4. Invoke Sarvam 105B Conversational Model with max_tokens=256 for optimal latency
         try:
@@ -314,9 +315,13 @@ class VoiceOrchestrator:
                 tool_result = await zepto_client.call_tool(tool_name, tool_args, enforce_guardrail=True)
                 resp_payload = tool_result.get("response", tool_result)
 
+                status = "success"
                 if tool_result.get("order_confirmation_guardrail_active"):
                     order_guardrail_active = True
                     action_type = "order_confirmation_requested"
+                    status = "guardrail_intercepted"
+                elif tool_result.get("status") == "error":
+                    status = "error"
 
                 # Extract product cards for UI presentation
                 cards = extract_product_cards(tool_name, resp_payload)
@@ -327,6 +332,41 @@ class VoiceOrchestrator:
 
                 if tool_name == "update_cart" and action_type != "order_confirmation_requested":
                     action_type = "cart_updated"
+
+                # Compute user-facing execution summary
+                summary = None
+                if tool_name in ("search_products", "search_multiple_products"):
+                    q = tool_args.get("query", "")
+                    summary = f"Searched catalog for '{q}' → {len(cards)} items found"
+                elif tool_name == "view_cart":
+                    total_items = resp_payload.get("total_items") or len(resp_payload.get("items", []))
+                    subtotal = resp_payload.get("subtotal") or resp_payload.get("total_payable") or 0.0
+                    summary = f"Retrieved live cart ({total_items} items, ₹{subtotal})"
+                elif tool_name == "update_cart":
+                    qty = tool_args.get("quantity", 1)
+                    summary = f"Updated cart item (qty: {qty})"
+                elif tool_name in ("create_order", "confirm_order_cod", "confirm_online_payment_order"):
+                    if order_guardrail_active:
+                        summary = "Safe preview generated (live confirmation intercepted by guardrail)"
+                    else:
+                        summary = "Order preview created"
+                elif tool_name == "list_saved_addresses":
+                    summary = "Retrieved saved delivery addresses"
+                elif tool_name == "get_location_serviceability":
+                    summary = "Checked location serviceability for Dadar Dark Store"
+                elif tool_name == "get_product_details":
+                    summary = "Fetched detailed product metadata & stock"
+
+                exec_ms = tool_result.get("execution_time_ms")
+                tool_logs.append(
+                    ToolExecutionLog(
+                        tool_name=tool_name,
+                        arguments=tool_args if isinstance(tool_args, dict) else {},
+                        status=status,
+                        execution_time_ms=exec_ms,
+                        summary=summary,
+                    )
+                )
 
                 messages.append({
                     "role": "tool",
@@ -403,6 +443,7 @@ class VoiceOrchestrator:
             audio_base64=audio_b64 or None,
             order_guardrail_active=order_guardrail_active,
             tools_invoked=tools_invoked,
+            tool_logs=tool_logs,
         )
 
     async def _process_mock_test_intent(
@@ -464,6 +505,16 @@ class VoiceOrchestrator:
             session_uuid, user_message, reply, product_ids=[p.product_id for p in cards]
         )
 
+        mock_logs = [
+            ToolExecutionLog(
+                tool_name="search_products",
+                arguments={"query": user_message},
+                status="success",
+                execution_time_ms=25.0,
+                summary=f"Mock catalog search for '{user_message}' → {len(cards)} items found",
+            )
+        ]
+
         return ChatMessageResponse(
             session_id=session_uuid,
             reply_text=reply,
@@ -474,6 +525,7 @@ class VoiceOrchestrator:
             audio_base64=audio_b64 or None,
             order_guardrail_active=False,
             tools_invoked=["search_products"],
+            tool_logs=mock_logs,
         )
 
     async def _fallback_catalog_search(
@@ -522,6 +574,16 @@ class VoiceOrchestrator:
             session_uuid, user_message, reply, product_ids=[p.product_id for p in cards]
         )
 
+        fallback_logs = [
+            ToolExecutionLog(
+                tool_name="search_products",
+                arguments={"query": user_message},
+                status="success",
+                execution_time_ms=30.0,
+                summary=f"Direct catalog search for '{user_message}' → {len(cards)} items found",
+            )
+        ]
+
         return ChatMessageResponse(
             session_id=session_uuid,
             reply_text=reply,
@@ -532,6 +594,7 @@ class VoiceOrchestrator:
             audio_base64=audio_b64 or None,
             order_guardrail_active=False,
             tools_invoked=["search_products"],
+            tool_logs=fallback_logs,
         )
 
 

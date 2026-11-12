@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -19,6 +20,14 @@ class ProductCard(BaseModel):
     is_available: bool = True
 
 
+class ToolExecutionLog(BaseModel):
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    status: str = "success"  # "success" | "error" | "guardrail_intercepted"
+    execution_time_ms: float | None = None
+    summary: str | None = None
+
+
 class ChatMessageResponse(BaseModel):
     session_id: UUID = Field(default_factory=uuid4)
     reply_text: str
@@ -29,3 +38,4 @@ class ChatMessageResponse(BaseModel):
     audio_base64: str | None = None
     order_guardrail_active: bool = False
     tools_invoked: list[str] = Field(default_factory=list)
+    tool_logs: list[ToolExecutionLog] = Field(default_factory=list)
