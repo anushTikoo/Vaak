@@ -11,6 +11,19 @@ from src.core.config import settings
 from src.core.logging import logger
 
 
+def _is_truthy(val: Any) -> bool:
+    """Safely check if a value is truthy, correctly parsing strings like 'false', '0', etc."""
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "y", "t")
+    return bool(val)
+
+
 def _find_token_cache() -> Path | None:
     candidates = [
         Path(".zepto_token.json"),
@@ -333,6 +346,8 @@ class ZeptoMCPClient:
         self.selected_address_id: str | None = None
         self.selected_store_id: str | None = None
         self.device_id: str = "vaak-app-client-560038"
+        # Temporary safety guardrail: prevent any automated/accidental live purchase confirmation
+        self.order_confirmation_guardrail_enabled: bool = True
 
         # Only load persisted token in live server runtime, not during pytest test runs
         if "pytest" not in sys.modules:
@@ -384,6 +399,34 @@ class ZeptoMCPClient:
     def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Return the schema metadata for all Zepto MCP tools."""
         return ZEPTO_TOOL_DEFINITIONS
+
+    def get_chat_tools(self) -> list[dict[str, Any]]:
+        """Return the schema metadata for all Zepto MCP tools formatted for Sarvam / OpenAI tool calling."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"],
+                },
+            }
+            for tool in self.get_tool_definitions()
+        ]
+
+    def enable_order_guardrail(self) -> None:
+        """Enable temporary order confirmation guardrail."""
+        self.order_confirmation_guardrail_enabled = True
+        logger.info("Zepto MCP order confirmation guardrail ENABLED")
+
+    def disable_order_guardrail(self) -> None:
+        """Disable temporary order confirmation guardrail (allows live checkout confirmation)."""
+        self.order_confirmation_guardrail_enabled = False
+        logger.warning("Zepto MCP order confirmation guardrail DISABLED - live order placement permitted")
+
+    def is_order_guardrail_active(self) -> bool:
+        """Return current status of temporary order confirmation safety guardrail."""
+        return self.order_confirmation_guardrail_enabled
 
     def _parse_mcp_response(self, resp: httpx.Response) -> dict[str, Any]:
         """Parse MCP HTTP response handling both raw JSON and text/event-stream SSE format."""
@@ -544,7 +587,7 @@ class ZeptoMCPClient:
 
         if name in ("confirm_order_cod", "create_order_confirmed"):
             return "create_order", {
-                "confirmOrder": bool(args.get("confirmOrder", True)),
+                "confirmOrder": _is_truthy(args.get("confirmOrder", True)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
                     args.get("userAddressId")
@@ -556,7 +599,7 @@ class ZeptoMCPClient:
 
         if name in ("confirm_online_payment_order", "confirm_order_upi"):
             return "create_online_payment_order", {
-                "confirmOrder": bool(args.get("confirmOrder", True)),
+                "confirmOrder": _is_truthy(args.get("confirmOrder", True)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
                     args.get("userAddressId")
@@ -568,7 +611,7 @@ class ZeptoMCPClient:
 
         if name in ("create_order", "place_order", "checkout"):
             return "create_order", {
-                "confirmOrder": bool(args.get("confirmOrder", False)),
+                "confirmOrder": _is_truthy(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
                     args.get("userAddressId")
@@ -580,7 +623,7 @@ class ZeptoMCPClient:
 
         if name == "create_online_payment_order":
             return "create_online_payment_order", {
-                "confirmOrder": bool(args.get("confirmOrder", False)),
+                "confirmOrder": _is_truthy(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
                     args.get("userAddressId")
@@ -644,21 +687,55 @@ class ZeptoMCPClient:
         name: str,
         arguments: dict[str, Any] | None = None,
         force_upstream: bool = False,
+        enforce_guardrail: bool = False,
     ) -> dict[str, Any]:
         """Execute a tool call using standard JSON-RPC 2.0 protocol against Zepto MCP with session support."""
-        args = arguments or {}
+        orig_name = name
+        orig_args = dict(arguments or {})
+        args = dict(orig_args)
+
+        # Temporary safety guardrail: prevent any automated/agent execution from confirming/placing a live order
+        is_order_confirmation_call = (
+            orig_name in (
+                "confirm_order_cod",
+                "confirm_online_payment_order",
+                "create_order_confirmed",
+                "confirm_order_upi",
+            )
+            or _is_truthy(orig_args.get("confirmOrder", False))
+        )
+        guardrail_applied = False
+        if (self.order_confirmation_guardrail_enabled and enforce_guardrail) and is_order_confirmation_call:
+            guardrail_applied = True
+            logger.warning(
+                f"ZeptoMCPClient Safety Guardrail: Intercepted live order confirmation attempt on '{orig_name}' "
+                f"(confirmOrder={orig_args.get('confirmOrder')}). Forcing preview mode (confirmOrder=False) "
+                "to completely prevent unintended real-world charges."
+            )
+            args["confirmOrder"] = False
 
         payload = {
             "jsonrpc": "2.0",
             "id": int(time.time() * 1000) % 100000,
             "method": "tools/call",
             "params": {
-                "name": name,
-                "arguments": args,
+                "name": orig_name,
+                "arguments": orig_args,
             },
         }
 
         start_time = time.perf_counter()
+
+        def _tag_result(res: dict[str, Any]) -> dict[str, Any]:
+            res["tool_name"] = orig_name
+            res["input_arguments"] = orig_args
+            if guardrail_applied:
+                res["order_confirmation_guardrail_active"] = True
+                res["guardrail_note"] = (
+                    "Live order placement was temporarily prevented by Vaak safety guardrail to avoid "
+                    "accidental charges. A safe order preview was generated instead."
+                )
+            return res
 
         # Execute upstream request if authenticated or forced by tester
         if self.is_authenticated or force_upstream:
@@ -709,7 +786,7 @@ class ZeptoMCPClient:
                     # 4. Handle success response
                     if resp.status_code == 200 and "error" not in parsed_body:
                         result_data = parsed_body.get("result", parsed_body)
-                        return {
+                        return _tag_result({
                             "tool_name": name,
                             "target_tool_name": target_name,
                             "input_arguments": args,
@@ -723,7 +800,7 @@ class ZeptoMCPClient:
                             "endpoint": self.endpoint,
                             "execution_time_ms": elapsed_ms,
                             "response": result_data,
-                        }
+                        })
                     else:
                         err_payload = (
                             parsed_body
@@ -731,7 +808,7 @@ class ZeptoMCPClient:
                             else parsed_body.get("error", parsed_body)
                         )
                         if force_upstream or self.is_authenticated:
-                            return {
+                            return _tag_result({
                                 "tool_name": name,
                                 "target_tool_name": target_name,
                                 "input_arguments": args,
@@ -748,12 +825,12 @@ class ZeptoMCPClient:
                                     if resp.status_code != 200
                                     else None
                                 ),
-                            }
+                            })
             except Exception as e:
                 logger.warning(f"Live Zepto MCP call failed: {e}")
                 if force_upstream:
                     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return {
+                    return _tag_result({
                         "tool_name": name,
                         "input_arguments": args,
                         "raw_rpc_request": payload,
@@ -764,12 +841,12 @@ class ZeptoMCPClient:
                         "endpoint": self.endpoint,
                         "execution_time_ms": elapsed_ms,
                         "error": str(e),
-                    }
+                    })
 
         # Sandbox / Development Mock Response (accurately mimics Zepto dark store schema)
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
         mock_result = self._generate_sandbox_response(name, args)
-        return {
+        return _tag_result({
             "tool_name": name,
             "input_arguments": args,
             "raw_rpc_request": payload,
@@ -784,12 +861,15 @@ class ZeptoMCPClient:
                 "Running in realistic Zepto dark store sandbox mode. "
                 "Connect via OAuth to link your live Zepto account."
             ),
-        }
+        })
 
     def _generate_sandbox_response(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Generate realistic quick-commerce dark store responses for each tool."""
         if name in ("search_products", "search_multiple_products"):
-            query = str(args.get("query", "groceries")).lower()
+            if "queries" in args and isinstance(args["queries"], list):
+                query = " ".join(str(q) for q in args["queries"]).lower()
+            else:
+                query = str(args.get("query", "groceries")).lower()
             limit = int(args.get("limit", args.get("quantity", 5)))
 
             catalog = [
@@ -1028,7 +1108,7 @@ class ZeptoMCPClient:
         elif name in ("place_order", "create_order", "confirm_order_cod"):
             payment_method = str(args.get("payment_method", "cod"))
             address_id = str(args.get("userAddressId", args.get("address_id", "addr_home_primary")))
-            is_confirmed = bool(args.get("confirmOrder", False))
+            is_confirmed = _is_truthy(args.get("confirmOrder", False))
             return {
                 "order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
                 "status": "confirmed" if is_confirmed else "preview",
@@ -1136,7 +1216,7 @@ class ZeptoMCPClient:
         elif name in ("create_online_payment_order", "confirm_online_payment_order"):
             return {
                 "order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
-                "status": "preview" if not args.get("confirmOrder") else "confirmed",
+                "status": "confirmed" if _is_truthy(args.get("confirmOrder", False)) else "preview",
                 "payment_url": "https://pay.zeptonow.com/order/01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
                 "amount_payable": 69.0,
             }

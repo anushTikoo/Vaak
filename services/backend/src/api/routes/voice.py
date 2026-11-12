@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, File, UploadFile
@@ -28,9 +28,16 @@ async def create_voice_session(request: VoiceSessionRequest):
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe_audio_file(audio: UploadFile = File(...)):
+async def transcribe_audio_file(
+    audio: UploadFile = File(...),
+    session_id: UUID | None = None,
+):
     audio_content = await audio.read()
-    logger.info(f"Received audio upload: {len(audio_content)} bytes, filename={audio.filename}")
+    effective_session_id = session_id or uuid4()
+    logger.info(
+        f"Received audio upload: {len(audio_content)} bytes, "
+        f"session_id={effective_session_id}, filename={audio.filename}"
+    )
 
     # Inspect audio duration & validity BEFORE calling Sarvam to prevent unnecessary billing
     inspection = inspect_audio(audio_content, filename=audio.filename or "recording.m4a")
@@ -40,7 +47,7 @@ async def transcribe_audio_file(audio: UploadFile = File(...)):
             f"{len(audio_content)} bytes). Skipping Sarvam STT API call to avoid billing."
         )
         return TranscribeResponse(
-            session_id=uuid4(),
+            session_id=effective_session_id,
             transcript="",
             detected_language="en-IN",
             confidence=0.0,
@@ -52,7 +59,7 @@ async def transcribe_audio_file(audio: UploadFile = File(...)):
         if e.response.status_code == 400:
             logger.warning(f"Sarvam STT returned 400 (audio empty or zero duration): {e.response.text}")
             return TranscribeResponse(
-                session_id=uuid4(),
+                session_id=effective_session_id,
                 transcript="",
                 detected_language="en-IN",
                 confidence=0.0,
@@ -60,7 +67,7 @@ async def transcribe_audio_file(audio: UploadFile = File(...)):
         raise
 
     return TranscribeResponse(
-        session_id=uuid4(),
+        session_id=effective_session_id,
         transcript=result["transcript"],
         detected_language=result.get("detected_language"),
         confidence=result.get("confidence", 0.0),

@@ -18,9 +18,13 @@ export interface ProductCardData {
 export interface ChatResponse {
   session_id: string;
   reply_text: string;
+  spoken_text?: string | null;
   suggested_products: ProductCardData[];
   action_type: string;
   detected_language?: string;
+  audio_base64?: string | null;
+  order_guardrail_active?: boolean;
+  tools_invoked?: string[];
 }
 
 export interface CartItemData {
@@ -110,6 +114,16 @@ export interface TranscribeResponse {
   confidence: number;
 }
 
+// Safe AbortError creator that avoids Hermes/React Native ReferenceError with Web DOMException
+export function createAbortError(message: string = 'Aborted'): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException(message, 'AbortError');
+  }
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 export class VaakApi {
   static async checkHealth(): Promise<{ status: string; environment?: string }> {
     try {
@@ -124,16 +138,24 @@ export class VaakApi {
     }
   }
 
-  static async sendChatMessage(message: string, sessionId?: string, language: string = 'auto'): Promise<ChatResponse> {
+  static async sendChatMessage(
+    message: string,
+    sessionId?: string,
+    language: string = 'auto',
+    signal?: AbortSignal,
+    generateAudio: boolean = true
+  ): Promise<ChatResponse> {
     const response = await fetch(`${API_BASE_URL}/api/v1/chat/message`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      signal,
       body: JSON.stringify({
         message,
         session_id: sessionId || null,
         language: language || 'auto',
+        generate_audio: generateAudio,
       }),
     });
 
@@ -144,12 +166,17 @@ export class VaakApi {
     return await response.json();
   }
 
-  static async textToSpeech(text: string, language: string = 'en-IN'): Promise<{ audio_base64: string; format: string }> {
+  static async textToSpeech(
+    text: string,
+    language: string = 'en-IN',
+    signal?: AbortSignal
+  ): Promise<{ audio_base64: string; format: string }> {
     const response = await fetch(`${API_BASE_URL}/api/v1/voice/tts`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      signal,
       body: JSON.stringify({
         text,
         language,
@@ -180,8 +207,17 @@ export class VaakApi {
     return null;
   }
 
-  static async uploadAudio(audioUri: string): Promise<TranscribeResponse> {
-    const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe`;
+  static async uploadAudio(
+    audioUri: string,
+    sessionId?: string,
+    signal?: AbortSignal
+  ): Promise<TranscribeResponse> {
+    const queryParam = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+    const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe${queryParam}`;
+
+    if (signal?.aborted) {
+      throw createAbortError();
+    }
 
     // 0. Pre-validate audio file size on device (empty M4A header is ~258 bytes)
     if (Platform.OS !== 'web' && typeof LegacyFileSystem?.getInfoAsync === 'function') {
@@ -190,7 +226,7 @@ export class VaakApi {
         if (!info.exists || (info.size !== undefined && info.size < 300)) {
           console.warn('Recorded audio file is missing or zero duration (< 300 bytes):', info);
           return {
-            session_id: '',
+            session_id: sessionId || '',
             transcript: '',
             confidence: 0,
           };
@@ -203,6 +239,7 @@ export class VaakApi {
     // 1. Try native LegacyFileSystem.uploadAsync (native Android OkHttp stream, bypasses WinterCG FormData)
     if (Platform.OS !== 'web' && typeof LegacyFileSystem?.uploadAsync === 'function') {
       try {
+        if (signal?.aborted) throw createAbortError();
         const result = await LegacyFileSystem.uploadAsync(uploadUrl, audioUri, {
           httpMethod: 'POST',
           uploadType: LegacyFileSystem.FileSystemUploadType.MULTIPART,
@@ -212,12 +249,14 @@ export class VaakApi {
             Accept: 'application/json',
           },
         });
+        if (signal?.aborted) throw createAbortError();
 
         if (result.status >= 200 && result.status < 300) {
           return JSON.parse(result.body);
         }
         throw new Error(`Voice transcribe failed with status ${result.status}: ${result.body}`);
-      } catch (nativeErr) {
+      } catch (nativeErr: any) {
+        if (nativeErr?.name === 'AbortError' || signal?.aborted) throw nativeErr;
         console.warn('Legacy uploadAsync failed, falling back to File.upload:', nativeErr);
       }
     }
@@ -225,6 +264,7 @@ export class VaakApi {
     // 2. Try modern Expo File.upload
     if (Platform.OS !== 'web' && typeof File !== 'undefined') {
       try {
+        if (signal?.aborted) throw createAbortError();
         const file = new File(audioUri);
         const result = await file.upload(uploadUrl, {
           httpMethod: 'POST',
@@ -235,22 +275,26 @@ export class VaakApi {
             Accept: 'application/json',
           },
         });
+        if (signal?.aborted) throw createAbortError();
 
         if (result.status >= 200 && result.status < 300) {
           return JSON.parse(result.body);
         }
         throw new Error(`Voice transcribe failed with status ${result.status}: ${result.body}`);
-      } catch (fileErr) {
+      } catch (fileErr: any) {
+        if (fileErr?.name === 'AbortError' || signal?.aborted) throw fileErr;
         console.warn('Modern File.upload failed, falling back to fetch:', fileErr);
       }
     }
 
     // 3. Web fallback
-    const blob = await (await fetch(audioUri)).blob();
+    if (signal?.aborted) throw createAbortError();
+    const blobRes = await fetch(audioUri, { signal });
+    const blob = await blobRes.blob();
     if (!blob || blob.size < 300) {
       console.warn('Recorded web audio blob is empty or zero duration (< 300 bytes):', blob?.size);
       return {
-        session_id: '',
+        session_id: sessionId || '',
         transcript: '',
         confidence: 0,
       };
@@ -263,6 +307,7 @@ export class VaakApi {
     const response = await fetch(uploadUrl, {
       method: 'POST',
       body: formData,
+      signal,
       headers: {
         Accept: 'application/json',
       },
