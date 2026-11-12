@@ -49,12 +49,15 @@ async def call_tool(body: CallToolRequest):
 
 @router.post("/run-all-tests")
 async def run_all_tool_tests():
-    """Execute test requests across ALL 10 Zepto MCP tools and return a comprehensive test report."""
+    """Execute test requests across all non-destructive Zepto MCP tools and return a comprehensive report."""
     results = []
     total_time_ms = 0.0
     passed = 0
 
-    for tool in ZEPTO_TOOL_DEFINITIONS:
+    # Exclude live purchasing tools from batch test suite to prevent accidental order placement
+    batch_tools = [tool for tool in ZEPTO_TOOL_DEFINITIONS if not tool.get("skip_batch_test")]
+
+    for tool in batch_tools:
         name = tool["name"]
         default_args = tool.get("default_input", {})
         res = await zepto_client.call_tool(name=name, arguments=default_args, force_upstream=False)
@@ -77,9 +80,9 @@ async def run_all_tool_tests():
         )
 
     return {
-        "total_tools": len(ZEPTO_TOOL_DEFINITIONS),
+        "total_tools": len(batch_tools),
         "passed_tools": passed,
-        "failed_tools": len(ZEPTO_TOOL_DEFINITIONS) - passed,
+        "failed_tools": len(batch_tools) - passed,
         "total_execution_time_ms": round(max(total_time_ms, 0.05), 2),
         "is_authenticated": zepto_client.is_authenticated,
         "endpoint": settings.ZEPTO_MCP_ENDPOINT,

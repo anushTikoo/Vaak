@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -345,16 +346,38 @@ export default function ZeptoMcpScreen() {
                 />
               </View>
 
+              {/* LIVE PURCHASE WARNING NOTICE */}
+              {(tool.name === 'confirm_order_cod' || tool.name === 'confirm_online_payment_order') && (
+                <View style={styles.liveOrderNotice}>
+                  <Text style={styles.liveOrderNoticeText}>
+                    {tool.name === 'confirm_order_cod'
+                      ? '⚠️ LIVE PURCHASE (COD): Executing this will place a real Cash on Delivery order with instant Zepto delivery to your Dadar address!'
+                      : '⚠️ LIVE PURCHASE (UPI): Executing this will finalize your order and generate a live UPI payment gateway link!'}
+                  </Text>
+                </View>
+              )}
+
               {/* EXECUTE BUTTON */}
               <TouchableOpacity
-                style={[styles.executeButton, isExecuting && styles.executeButtonDisabled]}
+                style={[
+                  styles.executeButton,
+                  tool.name === 'confirm_order_cod' && styles.executeButtonConfirm,
+                  tool.name === 'confirm_online_payment_order' && styles.executeButtonUPI,
+                  isExecuting && styles.executeButtonDisabled,
+                ]}
                 onPress={() => handleExecuteTool(tool.name)}
                 disabled={isExecuting}
               >
                 {isExecuting ? (
                   <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
-                  <Text style={styles.executeButtonText}>🚀 Execute Tool Call</Text>
+                  <Text style={styles.executeButtonText}>
+                    {tool.name === 'confirm_order_cod'
+                      ? '⚡ Place COD Order (confirmOrder: true)'
+                      : tool.name === 'confirm_online_payment_order'
+                      ? '💳 Generate UPI Payment Link (confirmOrder: true)'
+                      : '🚀 Execute Tool Call'}
+                  </Text>
                 )}
               </TouchableOpacity>
 
@@ -424,6 +447,36 @@ export default function ZeptoMcpScreen() {
                       </Text>
                     </View>
                   )}
+
+                  {/* ONE-CLICK PAYMENT LINK OPENER */}
+                  {(() => {
+                    const text = typeof result.response?.content?.[0]?.text === 'string'
+                      ? result.response.content[0].text
+                      : '';
+                    const structured = result.response?.structuredContent;
+                    const paymentUrl =
+                      structured?.paymentUrl ||
+                      structured?.payment_url ||
+                      text.match(/https:\/\/[^\s"'<>]+/)?.[0];
+
+                    if (paymentUrl && (paymentUrl.includes('pay') || paymentUrl.includes('zepto') || tool.name.includes('online_payment'))) {
+                      return (
+                        <TouchableOpacity
+                          style={styles.paymentLinkButton}
+                          onPress={() => {
+                            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                              window.open(paymentUrl, '_blank');
+                            } else {
+                              Linking.openURL(paymentUrl).catch(() => Alert.alert('Error', 'Could not open URL'));
+                            }
+                          }}
+                        >
+                          <Text style={styles.paymentLinkButtonText}>💳 Pay with UPI / Card (Click to Open)</Text>
+                        </TouchableOpacity>
+                      );
+                    }
+                    return null;
+                  })()}
 
                   {/* RESPONSE PAYLOAD */}
                   <View style={styles.payloadBox}>
@@ -806,6 +859,47 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  executeButtonConfirm: {
+    backgroundColor: '#DC2626',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+  },
+  executeButtonUPI: {
+    backgroundColor: '#0D9488',
+    borderWidth: 1,
+    borderColor: '#14B8A6',
+  },
+  liveOrderNotice: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  liveOrderNoticeText: {
+    color: '#FCA5A5',
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  paymentLinkButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#60A5FA',
+  },
+  paymentLinkButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   outputSection: {
     backgroundColor: '#0A0F1D',

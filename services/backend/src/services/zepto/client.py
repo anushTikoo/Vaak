@@ -210,9 +210,30 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "default_input": {"confirmOrder": False, "riderTip": 0},
     },
     {
+        "name": "confirm_order_cod",
+        "category": "Orders & Checkout",
+        "description": "⚡ LIVE PURCHASE (COD): Place real Cash on Delivery order immediately (confirmOrder: true).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "confirmOrder": {
+                    "type": "boolean",
+                    "description": "Set to true to finalize and place order",
+                    "default": True,
+                },
+                "riderTip": {"type": "number", "description": "Tip for the rider in INR", "default": 0},
+                "userAddressId": {"type": "string", "description": "Delivery address ID (optional)"},
+                "useZeptoCash": {"type": "boolean", "description": "Use wallet balance if available", "default": False},
+            },
+            "required": ["confirmOrder"],
+        },
+        "default_input": {"confirmOrder": True, "riderTip": 0},
+        "skip_batch_test": True,
+    },
+    {
         "name": "create_online_payment_order",
         "category": "Orders & Checkout",
-        "description": "Place an order using an online payment link. Set confirmOrder: false to preview.",
+        "description": "Preview online payment order (UPI / Cards / NetBanking). Default confirmOrder: false.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -228,6 +249,27 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
         "default_input": {"confirmOrder": False, "riderTip": 0},
+    },
+    {
+        "name": "confirm_online_payment_order",
+        "category": "Orders & Checkout",
+        "description": "⚡ LIVE PURCHASE (UPI): Finalize order and generate real UPI payment link.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "confirmOrder": {
+                    "type": "boolean",
+                    "description": "Set to true to generate live UPI payment link",
+                    "default": True,
+                },
+                "riderTip": {"type": "number", "description": "Tip for the rider in INR", "default": 0},
+                "userAddressId": {"type": "string", "description": "Delivery address ID (optional)"},
+                "useZeptoCash": {"type": "boolean", "description": "Use wallet balance if available", "default": False},
+            },
+            "required": ["confirmOrder"],
+        },
+        "default_input": {"confirmOrder": True, "riderTip": 0},
+        "skip_batch_test": True,
     },
     {
         "name": "check_payment_status",
@@ -500,21 +542,57 @@ class ZeptoMCPClient:
             store_id = args.get("storeId") or self.selected_store_id or "a3fa87d4-5821-486e-8c3b-0fafa5a71405"
             return "select_store", {"storeId": str(store_id)}
 
+        if name in ("confirm_order_cod", "create_order_confirmed"):
+            return "create_order", {
+                "confirmOrder": bool(args.get("confirmOrder", True)),
+                "riderTip": args.get("riderTip", 0),
+                "userAddressId": (
+                    args.get("userAddressId")
+                    or self.selected_address_id
+                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                ),
+                "useZeptoCash": bool(args.get("useZeptoCash", False)),
+            }
+
+        if name in ("confirm_online_payment_order", "confirm_order_upi"):
+            return "create_online_payment_order", {
+                "confirmOrder": bool(args.get("confirmOrder", True)),
+                "riderTip": args.get("riderTip", 0),
+                "userAddressId": (
+                    args.get("userAddressId")
+                    or self.selected_address_id
+                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                ),
+                "useZeptoCash": bool(args.get("useZeptoCash", False)),
+            }
+
+        if name in ("create_order", "place_order", "checkout"):
+            return "create_order", {
+                "confirmOrder": bool(args.get("confirmOrder", False)),
+                "riderTip": args.get("riderTip", 0),
+                "userAddressId": (
+                    args.get("userAddressId")
+                    or self.selected_address_id
+                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                ),
+                "useZeptoCash": bool(args.get("useZeptoCash", False)),
+            }
+
         if name == "create_online_payment_order":
             return "create_online_payment_order", {
                 "confirmOrder": bool(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
+                "userAddressId": (
+                    args.get("userAddressId")
+                    or self.selected_address_id
+                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                ),
+                "useZeptoCash": bool(args.get("useZeptoCash", False)),
             }
 
         if name == "check_payment_status":
             order_id = args.get("orderId") or "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"
             return "check_payment_status", {"orderId": str(order_id)}
-
-        if name in ("place_order", "checkout"):
-            return "create_order", {
-                "confirmOrder": bool(args.get("confirmOrder", False)),
-                "riderTip": args.get("riderTip", 0),
-            }
 
         if name in ("get_order_status", "track_order", "get_order_detail"):
             order_id = args.get("orderId") or args.get("order_id")
@@ -947,12 +1025,13 @@ class ZeptoMCPClient:
                 ],
             }
 
-        elif name in ("place_order", "create_order"):
+        elif name in ("place_order", "create_order", "confirm_order_cod"):
             payment_method = str(args.get("payment_method", "cod"))
-            address_id = str(args.get("address_id", "addr_home_primary"))
+            address_id = str(args.get("userAddressId", args.get("address_id", "addr_home_primary")))
+            is_confirmed = bool(args.get("confirmOrder", False))
             return {
-                "order_id": "z_ord_882910",
-                "status": "confirmed",
+                "order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
+                "status": "confirmed" if is_confirmed else "preview",
                 "payment_mode": payment_method,
                 "payment_status": "pending_delivery" if payment_method == "cod" else "paid",
                 "eta_minutes": 10,
@@ -963,13 +1042,13 @@ class ZeptoMCPClient:
                     "pincode": "400014",
                 },
                 "bill_details": {
-                    "item_total": 108.0,
-                    "delivery_charge": 0.0,
-                    "handling_charge": 4.0,
-                    "grand_total": 112.0,
+                    "item_total": 26.0,
+                    "delivery_charge": 30.0,
+                    "handling_charge": 13.0,
+                    "grand_total": 69.0,
                     "currency": "INR",
                 },
-                "tracking_url": "https://zeptonow.com/track/z_ord_882910",
+                "tracking_url": "https://zeptonow.com/track/01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
             }
 
         elif name in ("get_order_status", "get_order_detail"):
@@ -1054,11 +1133,11 @@ class ZeptoMCPClient:
                 "default_method": "COD",
             }
 
-        elif name == "create_online_payment_order":
+        elif name in ("create_online_payment_order", "confirm_online_payment_order"):
             return {
-                "order_id": "z_ord_online_9918",
+                "order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
                 "status": "preview" if not args.get("confirmOrder") else "confirmed",
-                "payment_url": "https://pay.zeptonow.com/order/z_ord_online_9918",
+                "payment_url": "https://pay.zeptonow.com/order/01a1a5b5-e7af-7859-b947-fbd84d46e7b5",
                 "amount_payable": 69.0,
             }
 
@@ -1159,8 +1238,8 @@ class ZeptoMCPClient:
         return res.get("response", {})
 
     async def place_order(self, payment_method: str = "cod", address_id: str | None = None) -> dict[str, Any]:
-        """Alias for create_order."""
-        return await self.create_order(confirm_order=False)
+        """Alias for create_order with confirmation."""
+        return await self.create_order(confirm_order=True)
 
     async def get_order_detail(self, order_id: str) -> dict[str, Any]:
         """Fetch detailed order tracking and rider info."""

@@ -40,7 +40,9 @@ async def test_zepto_mcp_tools_metadata_endpoint(client):
         "update_cart",
         "get_payment_methods",
         "create_order",
+        "confirm_order_cod",
         "create_online_payment_order",
+        "confirm_online_payment_order",
         "check_payment_status",
         "get_order_detail",
         "list_order_history",
@@ -98,7 +100,12 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
     elif tool_name == "get_location_serviceability":
         assert resp["serviceable"] is True
         assert len(resp["locations"]) > 0
-    elif tool_name in ("create_order", "create_online_payment_order"):
+    elif tool_name in (
+        "create_order",
+        "confirm_order_cod",
+        "create_online_payment_order",
+        "confirm_online_payment_order",
+    ):
         assert "order_id" in resp
     elif tool_name == "get_order_detail":
         assert resp["order_id"] == input_args["orderId"]
@@ -115,17 +122,18 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
 
 @pytest.mark.asyncio
 async def test_run_all_tools_summary_endpoint(client):
-    """Verify POST /api/v1/zepto/mcp/run-all-tests runs all tools and produces clean report."""
+    """Verify POST /api/v1/zepto/mcp/run-all-tests runs all non-destructive tools and produces clean report."""
     response = await client.post("/api/v1/zepto/mcp/run-all-tests")
 
     assert response.status_code == 200
     report = response.json()
 
-    assert report["total_tools"] == len(ZEPTO_TOOL_DEFINITIONS)
-    assert report["passed_tools"] == len(ZEPTO_TOOL_DEFINITIONS)
+    batch_tools = [t for t in ZEPTO_TOOL_DEFINITIONS if not t.get("skip_batch_test")]
+    assert report["total_tools"] == len(batch_tools)
+    assert report["passed_tools"] == len(batch_tools)
     assert report["failed_tools"] == 0
     assert report["total_execution_time_ms"] >= 0
-    assert len(report["results"]) == len(ZEPTO_TOOL_DEFINITIONS)
+    assert len(report["results"]) == len(batch_tools)
     assert all(r["status"] == "success" for r in report["results"])
 
 
