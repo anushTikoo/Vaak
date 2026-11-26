@@ -22,6 +22,4 @@ class ChatMessageResponse(BaseModel):
     session_id: UUID = Field(default_factory=uuid4)
     reply_text: str
     suggested_products: list[ProductCard] = Field(default_factory=list)
-    action_type: str = (
-        "none"  # "none", "cart_updated", "clarification_needed", "order_confirmation_requested"
-    )
+    action_type: str = "none"  # "none", "cart_updated", "clarification_needed", "order_confirmation_requested"
