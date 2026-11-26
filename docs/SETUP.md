@@ -1,4 +1,4 @@
-# Vāk (वाक्) — Environment Setup & Verification Guide
+# Vaak (वाक्) — Environment Setup & Verification Guide
 
 This guide details the complete developer setup on Linux (Fedora KDE) and other platforms.
 
@@ -18,10 +18,11 @@ This guide details the complete developer setup on Linux (Fedora KDE) and other 
 For Android development with React Native and Expo (SDK 58), follow these exact steps:
 
 ### A. Install Android 32-bit Compatibility Libraries
-Open your terminal and install the compatibility libraries needed by the Android SDK binaries:
+On Fedora, run:
 ```bash
-sudo dnf install -y glibc.i686 glibc-devel.i686 libstdc++.i686 zlib-devel.i686 ncurses-devel.i686
+sudo dnf install -y glibc.i686 glibc-devel.i686 libstdc++.i686 zlib-ng-compat.i686 ncurses-devel.i686
 ```
+*(Note: Fedora replaces legacy `zlib-devel` with `zlib-ng-compat`)*
 
 ### B. Install Android Studio (Recommended Native Method)
 1. Download the official Linux archive (`.tar.gz`) from:

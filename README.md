@@ -1,6 +1,6 @@
-# Vāk (वाक्) — Voice-First AI Shopping Assistant
+# Vaak (वाक्) — Voice-First AI Shopping Assistant
 
-> **Vāk (वाक्)** is an Indian-context, voice-first AI shopping assistant designed to make digital commerce effortless through natural speech, starting with grocery ordering via Zepto.
+> **Vaak (वाक्)** is an Indian-context, voice-first AI shopping assistant designed to make digital commerce effortless through natural speech, starting with grocery ordering via Zepto.
 
 ---
 
@@ -16,7 +16,7 @@
 ## 2. Monorepo Architecture
 
 ```text
-vak/
+vaak/
 ├── apps/
 │   └── mobile/                # React Native + Expo SDK 58 (Expo Router, TypeScript)
 │       ├── src/               # Application code, hooks, components

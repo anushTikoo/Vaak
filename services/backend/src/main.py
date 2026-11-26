@@ -3,10 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import cart, chat, health, me, orders, voice
 from src.core.config import settings
-from src.core.errors import VakException, generic_exception_handler, vak_exception_handler
+from src.core.errors import VaakException, generic_exception_handler, vaak_exception_handler
 
 app = FastAPI(
-    title="Vāk API",
+    title="Vaak API",
     description="Voice-first AI conversational commerce backend for Zepto",
     version="0.1.0",
 )
@@ -21,7 +21,7 @@ app.add_middleware(
 )
 
 # Register exception handlers
-app.add_exception_handler(VakException, vak_exception_handler)
+app.add_exception_handler(VaakException, vaak_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # Mount API routers

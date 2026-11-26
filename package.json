@@ -1,8 +1,8 @@
 {
-  "name": "vak-monorepo",
+  "name": "vaak-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "Vāk (वाक्) - Voice-First AI Shopping Assistant",
+  "description": "Vaak (वाक्) - Voice-First AI Shopping Assistant",
   "workspaces": [
     "apps/*"
   ],

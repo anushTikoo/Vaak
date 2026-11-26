@@ -9,7 +9,7 @@ router = APIRouter(tags=["Health"])
 async def root_health():
     return {
         "status": "healthy",
-        "service": "vak-backend",
+        "service": "vaak-backend",
         "environment": settings.ENVIRONMENT,
     }
 

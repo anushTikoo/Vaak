@@ -1,6 +1,6 @@
-# Vāk (वाक्) — External Integrations & Providers
+# Vaak (वाक्) — External Integrations & Providers
 
-This document details the technical specifications, security models, and known limitations of Vāk's external integrations.
+This document details the technical specifications, security models, and known limitations of Vaak's external integrations.
 
 ---
 
@@ -43,10 +43,10 @@ Investigated GitHub issues on Zepto MCP:
 1. **Issue #62 & #74**: Items added to the MCP cart do not always reflect immediately in the native Zepto mobile application cart.
 2. **Issue #21**: Session/cart scoping differences between MCP API clients and consumer app authentication tokens.
 
-**Vāk Architectural Solution**:
-- Vāk maintains its own authoritative **in-memory & PostgreSQL-backed shopping cart** (`Cart` & `CartItem` schemas).
-- The user reviews, modifies quantities, and visually confirms the Vāk cart.
-- When the order confirmation step occurs, Vāk executes the MCP order placement workflow with atomic confirmation.
+**Vaak Architectural Solution**:
+- Vaak maintains its own authoritative **in-memory & PostgreSQL-backed shopping cart** (`Cart` & `CartItem` schemas).
+- The user reviews, modifies quantities, and visually confirms the Vaak cart.
+- When the order confirmation step occurs, Vaak executes the MCP order placement workflow with atomic confirmation.
 - We do not assume synchronous reflection in the consumer Zepto app's native UI until the order is officially confirmed by the Zepto backend.
 
 ---

@@ -4,14 +4,14 @@ from fastapi.responses import JSONResponse
 from src.core.logging import logger
 
 
-class VakException(Exception):
+class VaakException(Exception):
     def __init__(self, message: str, status_code: int = status.HTTP_400_BAD_REQUEST):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
 
 
-class IntegrationNotConfiguredError(VakException):
+class IntegrationNotConfiguredError(VaakException):
     def __init__(self, service_name: str):
         super().__init__(
             message=f"Integration '{service_name}' is not configured. Please supply required credentials.",
@@ -19,8 +19,8 @@ class IntegrationNotConfiguredError(VakException):
         )
 
 
-async def vak_exception_handler(request: Request, exc: VakException) -> JSONResponse:
-    logger.warning(f"VakException on {request.url.path}: {exc.message}")
+async def vaak_exception_handler(request: Request, exc: VaakException) -> JSONResponse:
+    logger.warning(f"VaakException on {request.url.path}: {exc.message}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.__class__.__name__, "message": exc.message}},

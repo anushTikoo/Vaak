@@ -1,7 +1,7 @@
 [project]
-name = "vak-backend"
+name = "vaak-backend"
 version = "0.1.0"
-description = "Vāk (वाक्) - Voice-First AI Shopping Assistant Backend"
+description = "Vaak (वाक्) - Voice-First AI Shopping Assistant Backend"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
