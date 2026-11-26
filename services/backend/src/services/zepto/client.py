@@ -1,5 +1,11 @@
+import json
+import sys
+from pathlib import Path
+
 from src.core.config import settings
 from src.core.logging import logger
+
+_TOKEN_CACHE_FILE = Path(".zepto_token.json")
 
 
 class ZeptoMCPClient:
@@ -8,9 +14,18 @@ class ZeptoMCPClient:
     def __init__(self):
         self.endpoint = settings.ZEPTO_MCP_ENDPOINT
         self.client_id = settings.ZEPTO_CLIENT_ID
-        self.client_secret = settings.ZEPTO_CLIENT_SECRET
         self.access_token: str | None = None
         self.refresh_token: str | None = None
+        # Only load persisted token in live server runtime, not during pytest test runs
+        if "pytest" not in sys.modules and _TOKEN_CACHE_FILE.exists():
+            try:
+                data = json.loads(_TOKEN_CACHE_FILE.read_text(encoding="utf-8"))
+                self.access_token = data.get("access_token")
+                self.refresh_token = data.get("refresh_token")
+                if self.access_token:
+                    logger.info("Restored persisted Zepto MCP session from token cache")
+            except Exception as e:
+                logger.warning(f"Failed to read token cache: {e}")
 
     @property
     def is_authenticated(self) -> bool:
@@ -20,6 +35,14 @@ class ZeptoMCPClient:
         self.access_token = access_token
         self.refresh_token = refresh_token
         logger.info("Zepto MCP access token successfully updated")
+        if "pytest" not in sys.modules:
+            try:
+                _TOKEN_CACHE_FILE.write_text(
+                    json.dumps({"access_token": access_token, "refresh_token": refresh_token}),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist token cache: {e}")
 
     async def search_products(self, query: str, limit: int = 5) -> list[dict]:
         """Search products through Zepto MCP catalog."""
