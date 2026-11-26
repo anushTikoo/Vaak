@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
+import { File, UploadType } from 'expo-file-system';
 
 // On Android emulator, 10.0.2.2 maps to the Linux host machine's localhost:8000
 export const API_BASE_URL =
@@ -80,17 +82,59 @@ export class VaakApi {
   }
 
   static async uploadAudio(audioUri: string): Promise<TranscribeResponse> {
+    const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe`;
+
+    // 1. Try native LegacyFileSystem.uploadAsync (native Android OkHttp stream, bypasses WinterCG FormData)
+    if (Platform.OS !== 'web' && typeof LegacyFileSystem?.uploadAsync === 'function') {
+      try {
+        const result = await LegacyFileSystem.uploadAsync(uploadUrl, audioUri, {
+          httpMethod: 'POST',
+          uploadType: LegacyFileSystem.FileSystemUploadType.MULTIPART,
+          fieldName: 'audio',
+          mimeType: 'audio/m4a',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+
+        if (result.status >= 200 && result.status < 300) {
+          return JSON.parse(result.body);
+        }
+        throw new Error(`Voice transcribe failed with status ${result.status}: ${result.body}`);
+      } catch (nativeErr) {
+        console.warn('Legacy uploadAsync failed, falling back to File.upload:', nativeErr);
+      }
+    }
+
+    // 2. Try modern Expo File.upload
+    if (Platform.OS !== 'web' && typeof File !== 'undefined') {
+      try {
+        const file = new File(audioUri);
+        const result = await file.upload(uploadUrl, {
+          httpMethod: 'POST',
+          uploadType: UploadType.MULTIPART,
+          fieldName: 'audio',
+          mimeType: 'audio/m4a',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+
+        if (result.status >= 200 && result.status < 300) {
+          return JSON.parse(result.body);
+        }
+        throw new Error(`Voice transcribe failed with status ${result.status}: ${result.body}`);
+      } catch (fileErr) {
+        console.warn('Modern File.upload failed, falling back to fetch:', fileErr);
+      }
+    }
+
+    // 3. Web fallback
     const formData = new FormData();
-    const filename = audioUri.split('/').pop() || 'recording.m4a';
+    const blob = await (await fetch(audioUri)).blob();
+    formData.append('audio', blob, 'recording.m4a');
 
-    // @ts-expect-error React Native multipart format
-    formData.append('audio', {
-      uri: audioUri,
-      name: filename,
-      type: 'audio/m4a',
-    });
-
-    const response = await fetch(`${API_BASE_URL}/api/v1/voice/transcribe`, {
+    const response = await fetch(uploadUrl, {
       method: 'POST',
       body: formData,
       headers: {
