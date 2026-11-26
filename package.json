@@ -1,0 +1,23 @@
+{
+  "name": "vak-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vāk (वाक्) - Voice-First AI Shopping Assistant",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "mobile": "npm --prefix apps/mobile start",
+    "android": "npm --prefix apps/mobile run android",
+    "backend": "cd services/backend && uv run uvicorn src.main:app --reload --port 8000",
+    "test:backend": "cd services/backend && uv run pytest",
+    "test:mobile": "npm --prefix apps/mobile run typecheck",
+    "lint:backend": "cd services/backend && uv run ruff check .",
+    "lint:mobile": "npm --prefix apps/mobile run lint",
+    "lint": "npm run lint:backend && npm run lint:mobile",
+    "typecheck": "npm --prefix apps/mobile run typecheck"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.0"
+  }
+}

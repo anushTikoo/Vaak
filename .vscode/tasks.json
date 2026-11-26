@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend: Dev Server",
+      "type": "shell",
+      "command": "uv run uvicorn src.main:app --reload --port 8000",
+      "options": {
+        "cwd": "${workspaceFolder}/services/backend"
+      },
+      "problemMatcher": [],
+      "isBackground": true
+    },
+    {
+      "label": "Backend: Run Tests",
+      "type": "shell",
+      "command": "uv run pytest",
+      "options": {
+        "cwd": "${workspaceFolder}/services/backend"
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Mobile: Start Expo",
+      "type": "shell",
+      "command": "npm run mobile",
+      "problemMatcher": [],
+      "isBackground": true
+    }
+  ]
+}
