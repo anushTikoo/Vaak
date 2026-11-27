@@ -27,6 +27,9 @@ export default function AppTabs() {
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Cart</TabButton>
           </TabTrigger>
+          <TabTrigger name="zepto" href={'/zepto' as any} asChild>
+            <TabButton>⚡ Zepto MCP</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

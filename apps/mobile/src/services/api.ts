@@ -41,6 +41,68 @@ export interface CartData {
   total_items: number;
 }
 
+export interface ZeptoToolDefinition {
+  name: string;
+  category: string;
+  description: string;
+  parameters: {
+    type: string;
+    properties: Record<string, { type: string; description: string; default?: any }>;
+    required?: string[];
+  };
+  default_input: Record<string, any>;
+}
+
+export interface ZeptoMcpToolsResponse {
+  status: string;
+  endpoint: string;
+  is_authenticated: boolean;
+  tools_count: number;
+  tools: ZeptoToolDefinition[];
+}
+
+export interface ZeptoToolCallResult {
+  tool_name: string;
+  input_arguments: Record<string, any>;
+  raw_rpc_request: {
+    jsonrpc: string;
+    id: number;
+    method: string;
+    params: {
+      name: string;
+      arguments: Record<string, any>;
+    };
+  };
+  status: 'success' | 'error';
+  status_code: number;
+  source: 'live_mcp' | 'sandbox_mock';
+  is_authenticated: boolean;
+  endpoint: string;
+  execution_time_ms: number;
+  response?: any;
+  error?: any;
+  note?: string;
+}
+
+export interface ZeptoAllTestsReport {
+  total_tools: number;
+  passed_tools: number;
+  failed_tools: number;
+  total_execution_time_ms: number;
+  is_authenticated: boolean;
+  endpoint: string;
+  results: {
+    tool_name: string;
+    category?: string;
+    status: string;
+    source: string;
+    execution_time_ms: number;
+    input_arguments: Record<string, any>;
+    raw_rpc_request: any;
+    response_preview: any;
+  }[];
+}
+
 export interface TranscribeResponse {
   session_id: string;
   transcript: string;
@@ -258,6 +320,66 @@ export class VaakApi {
     });
     if (!response.ok) {
       throw new Error(`Failed to delete item: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async getZeptoMcpTools(): Promise<ZeptoMcpToolsResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/zepto/mcp/tools`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Zepto MCP tools: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async pingZeptoMcp(): Promise<{
+    reachable: boolean;
+    status_code?: number;
+    latency_ms: number;
+    endpoint: string;
+    headers?: Record<string, string>;
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/zepto/mcp/ping`);
+    if (!response.ok) {
+      throw new Error(`Failed to ping Zepto MCP: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async callZeptoMcpTool(
+    toolName: string,
+    args: Record<string, any>,
+    forceUpstream: boolean = false
+  ): Promise<ZeptoToolCallResult> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/zepto/mcp/call`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tool_name: toolName,
+        arguments: args,
+        force_upstream: forceUpstream,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Zepto MCP tool call failed: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async runAllZeptoToolTests(): Promise<ZeptoAllTestsReport> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/zepto/mcp/run-all-tests`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to run all Zepto tool tests: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async getZeptoAuthStatus(): Promise<{ is_authenticated: boolean; endpoint: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/auth/zepto/status`);
+    if (!response.ok) {
+      throw new Error(`Failed to get Zepto auth status: ${response.statusText}`);
     }
     return await response.json();
   }

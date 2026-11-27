@@ -11,12 +11,14 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { createAudioPlayer, setAudioModeAsync, AudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
 import { VaakApi, ProductCardData, CartData } from '@/services/api';
 
 export default function VoiceHomeScreen() {
+  const router = useRouter();
   const {
     isRecording,
     hasPermission,
@@ -504,6 +506,17 @@ export default function VoiceHomeScreen() {
           </View>
           <View style={styles.headerControls}>
             <TouchableOpacity
+              onPress={() => router.push('/zepto' as any)}
+              activeOpacity={0.7}
+              style={[
+                styles.mcpToggle,
+                Platform.OS === 'web' && ({ cursor: 'pointer', userSelect: 'none' } as any),
+              ]}
+            >
+              <Text style={styles.mcpToggleText}>⚡ Zepto MCP</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               onPress={runMicDiagnostic}
               disabled={isDiagnosticRunning}
               activeOpacity={0.7}
@@ -847,6 +860,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     marginTop: 2,
+  },
+  mcpToggle: {
+    backgroundColor: '#312E81',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#6366F1',
+  },
+  mcpToggleText: {
+    fontSize: 11,
+    color: '#E0E7FF',
+    fontWeight: '700',
   },
   diagToggle: {
     backgroundColor: '#334155',
