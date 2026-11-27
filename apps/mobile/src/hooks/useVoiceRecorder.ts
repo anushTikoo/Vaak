@@ -86,6 +86,8 @@ export function useVoiceRecorder(): UseVoiceRecorderResult {
 
     try {
       await recorder.stop();
+      // Wait for Android MediaRecorder to finalize audio container writing
+      await new Promise((resolve) => setTimeout(resolve, 300));
       const uri = recorder.uri;
       setLastRecordedUri(uri);
       return uri;
