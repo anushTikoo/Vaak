@@ -45,5 +45,8 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "minimatch": "^11.0.8"
+  }
 }
