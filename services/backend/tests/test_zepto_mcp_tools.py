@@ -28,16 +28,22 @@ async def test_zepto_mcp_tools_metadata_endpoint(client):
     tool_names = {tool["name"] for tool in data["tools"]}
     expected_tools = {
         "search_products",
+        "search_multiple_products",
+        "get_past_order_items",
         "get_product_details",
-        "get_cart",
-        "add_to_cart",
+        "list_saved_addresses",
+        "select_saved_address",
+        "get_location_serviceability",
+        "select_store",
+        "get_user_details",
+        "view_cart",
         "update_cart",
-        "remove_from_cart",
-        "clear_cart",
-        "search_location",
-        "place_order",
-        "get_order_status",
-        "list_orders",
+        "get_payment_methods",
+        "create_order",
+        "create_online_payment_order",
+        "check_payment_status",
+        "get_order_detail",
+        "list_order_history",
     }
     assert expected_tools.issubset(tool_names)
 
@@ -73,7 +79,7 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
 
     # Check tool-specific response contents
     resp = data["response"]
-    if tool_name == "search_products":
+    if tool_name in ("search_products", "search_multiple_products"):
         assert "items" in resp
         assert "serving_store" in resp
         assert len(resp["items"]) > 0
@@ -82,30 +88,29 @@ async def test_each_zepto_tool_executes_successfully_and_returns_rpc_contract(cl
         assert resp["product_id"] == expected_pid
         assert "price" in resp
         assert "available_stock" in resp
-    elif tool_name == "get_cart":
+    elif tool_name == "view_cart":
         assert "items" in resp
         assert "total_payable" in resp
-    elif tool_name == "add_to_cart":
-        assert resp["status"] == "success"
-        assert resp["item"]["product_id"] == input_args["product_id"]
-    elif tool_name in ("update_cart", "remove_from_cart"):
+    elif tool_name == "update_cart":
         assert resp["status"] == "success"
         expected_id = input_args.get("productVariantId") or input_args.get("item_id")
         assert resp["item_id"] == expected_id
-    elif tool_name == "clear_cart":
-        assert resp["status"] == "success"
-    elif tool_name == "search_location":
+    elif tool_name == "get_location_serviceability":
         assert resp["serviceable"] is True
         assert len(resp["locations"]) > 0
-    elif tool_name == "place_order":
-        assert resp["status"] == "confirmed"
+    elif tool_name in ("create_order", "create_online_payment_order"):
         assert "order_id" in resp
-    elif tool_name == "get_order_status":
-        assert resp["order_id"] == input_args["order_id"]
-        assert "timeline" in resp
-    elif tool_name == "list_orders":
+    elif tool_name == "get_order_detail":
+        assert resp["order_id"] == input_args["orderId"]
+    elif tool_name == "list_order_history":
         assert "orders" in resp
         assert len(resp["orders"]) > 0
+    elif tool_name == "select_store":
+        assert resp["status"] == "selected"
+    elif tool_name == "get_payment_methods":
+        assert "payment_methods" in resp
+    elif tool_name == "check_payment_status":
+        assert resp["payment_status"] == "PAID"
 
 
 @pytest.mark.asyncio

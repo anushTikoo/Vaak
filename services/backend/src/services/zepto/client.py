@@ -41,11 +41,11 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search keyword (e.g. 'Amul Milk', 'Bread')"},
-                "quantity": {"type": "number", "description": "Desired quantity (default: 1)", "default": 1},
+                "pageNumber": {"type": "integer", "description": "Page number (default: 1)", "default": 1},
             },
             "required": ["query"],
         },
-        "default_input": {"query": "Amul Milk", "quantity": 1},
+        "default_input": {"query": "Amul Milk"},
     },
     {
         "name": "search_multiple_products",
@@ -59,6 +59,7 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "description": "Array of product search queries",
                     "items": {"type": "string"},
                 },
+                "pageNumber": {"type": "integer", "description": "Page number (default: 1)", "default": 1},
             },
             "required": ["queries"],
         },
@@ -77,7 +78,7 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_product_details",
         "category": "Catalog & Search",
-        "description": "Fetch detailed live metadata for a specific product SKU / variant.",
+        "description": "Fetch live metadata, pricing, inventory, and nutrition for a specific product SKU / variant.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -125,6 +126,21 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "default_input": {"latitude": 19.0191, "longitude": 72.8552},
     },
     {
+        "name": "select_store",
+        "category": "Location & Store",
+        "description": "Select a specific dark store ID for the current shopping session.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "storeId": {"type": "string", "description": "Dark store UUID"},
+                "latitude": {"type": "number", "description": "Latitude coordinate (optional)"},
+                "longitude": {"type": "number", "description": "Longitude coordinate (optional)"},
+            },
+            "required": ["storeId"],
+        },
+        "default_input": {"storeId": "a3fa87d4-5821-486e-8c3b-0fafa5a71405"},
+    },
+    {
         "name": "get_user_details",
         "category": "Account & Profile",
         "description": "Fetch authenticated user's profile details including name, verification, and status.",
@@ -135,38 +151,14 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "default_input": {},
     },
     {
-        "name": "get_cart",
-        "category": "Cart Management",
-        "description": "View current user cart contents, item breakdown, and delivery fees.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-        "default_input": {},
-    },
-    {
         "name": "view_cart",
         "category": "Cart Management",
-        "description": "View current user cart contents, item breakdown, and delivery fees.",
+        "description": "View current user cart contents, item breakdown, savings, and delivery fees.",
         "parameters": {
             "type": "object",
             "properties": {},
         },
         "default_input": {},
-    },
-    {
-        "name": "add_to_cart",
-        "category": "Cart Management",
-        "description": "Add a grocery SKU with specified quantity to the user's active Zepto basket.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "product_id": {"type": "string", "description": "Product SKU / Variant UUID"},
-                "quantity": {"type": "integer", "description": "Number of units to add", "default": 1},
-            },
-            "required": ["product_id"],
-        },
-        "default_input": {"product_id": "23037033-b0ab-4109-82b6-30f3a2a2cf84", "quantity": 1},
     },
     {
         "name": "update_cart",
@@ -176,88 +168,16 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "productVariantId": {"type": "string", "description": "Product variant UUID"},
-                "quantity": {"type": "integer", "description": "New unit count", "default": 1},
+                "quantity": {"type": "integer", "description": "New unit count (0 to remove)", "default": 1},
+                "replaceCart": {
+                    "type": "boolean",
+                    "description": "Replace entire cart with these items",
+                    "default": False,
+                },
             },
             "required": ["productVariantId", "quantity"],
         },
         "default_input": {"productVariantId": "23037033-b0ab-4109-82b6-30f3a2a2cf84", "quantity": 1},
-    },
-    {
-        "name": "remove_from_cart",
-        "category": "Cart Management",
-        "description": "Remove a specific item line from the active Zepto cart.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "item_id": {"type": "string", "description": "Cart item ID or product SKU"},
-            },
-            "required": ["item_id"],
-        },
-        "default_input": {"item_id": "z_eggs_6pk"},
-    },
-    {
-        "name": "clear_cart",
-        "category": "Cart Management",
-        "description": "Empty all items from the current Zepto cart session.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-        "default_input": {},
-    },
-    {
-        "name": "search_location",
-        "category": "Location & Store",
-        "description": "Resolve delivery address, area, or Indian PIN code to locate nearest serving dark store.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Locality or address (e.g. 'Indiranagar, Bengaluru')"},
-                "pincode": {"type": "string", "description": "6-digit Indian PIN code", "default": "400014"},
-            },
-            "required": ["query"],
-        },
-        "default_input": {"query": "Indiranagar, Bengaluru", "pincode": "400014"},
-    },
-    {
-        "name": "place_order",
-        "category": "Orders & Checkout",
-        "description": "Place a real Cash on Delivery (COD) grocery order with the serving dark store.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "payment_method": {"type": "string", "description": "Payment method: 'cod'", "default": "cod"},
-                "address_id": {"type": "string", "description": "Saved address ID", "default": "addr_home_primary"},
-            },
-            "required": ["payment_method"],
-        },
-        "default_input": {"payment_method": "cod", "address_id": "addr_home_primary"},
-    },
-    {
-        "name": "get_order_status",
-        "category": "Orders & Checkout",
-        "description": "Query real-time 10-minute order status, dark store packing, and delivery rider ETA.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "order_id": {"type": "string", "description": "Zepto order reference ID"},
-            },
-            "required": ["order_id"],
-        },
-        "default_input": {"order_id": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"},
-    },
-    {
-        "name": "list_orders",
-        "category": "Orders & Checkout",
-        "description": "Retrieve recent order history with delivery timestamps and total spent.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "description": "Number of previous orders to return", "default": 5},
-            },
-            "required": [],
-        },
-        "default_input": {"limit": 5},
     },
     {
         "name": "get_payment_methods",
@@ -272,16 +192,55 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "create_order",
         "category": "Orders & Checkout",
-        "description": "Place a real Cash on Delivery (COD) grocery order with the serving dark store.",
+        "description": "Place a Cash on Delivery (COD) order. Set confirmOrder: false to preview bill summary first.",
         "parameters": {
             "type": "object",
             "properties": {
-                "confirmOrder": {"type": "boolean", "description": "Must be true to place order", "default": False},
+                "confirmOrder": {
+                    "type": "boolean",
+                    "description": "Must be true to place order; false for preview",
+                    "default": False,
+                },
                 "riderTip": {"type": "number", "description": "Tip for the rider in INR", "default": 0},
+                "userAddressId": {"type": "string", "description": "Delivery address ID (optional)"},
+                "useZeptoCash": {"type": "boolean", "description": "Use wallet balance if available", "default": False},
             },
             "required": [],
         },
         "default_input": {"confirmOrder": False, "riderTip": 0},
+    },
+    {
+        "name": "create_online_payment_order",
+        "category": "Orders & Checkout",
+        "description": "Place an order using an online payment link. Set confirmOrder: false to preview.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "confirmOrder": {
+                    "type": "boolean",
+                    "description": "Must be true to place order; false for preview",
+                    "default": False,
+                },
+                "riderTip": {"type": "number", "description": "Tip for the rider in INR", "default": 0},
+                "userAddressId": {"type": "string", "description": "Delivery address ID (optional)"},
+                "useZeptoCash": {"type": "boolean", "description": "Use wallet balance if available", "default": False},
+            },
+            "required": [],
+        },
+        "default_input": {"confirmOrder": False, "riderTip": 0},
+    },
+    {
+        "name": "check_payment_status",
+        "category": "Orders & Checkout",
+        "description": "Check payment status for an order placed via create_online_payment_order.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "orderId": {"type": "string", "description": "Zepto order UUID"},
+            },
+            "required": ["orderId"],
+        },
+        "default_input": {"orderId": "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"},
     },
     {
         "name": "get_order_detail",
@@ -290,7 +249,7 @@ ZEPTO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "orderId": {"type": "string", "description": "Zepto order ID"},
+                "orderId": {"type": "string", "description": "Zepto order UUID"},
             },
             "required": ["orderId"],
         },
@@ -536,6 +495,20 @@ class ZeptoMCPClient:
 
         if name in ("get_cart", "cart"):
             return "view_cart", {}
+
+        if name == "select_store":
+            store_id = args.get("storeId") or self.selected_store_id or "a3fa87d4-5821-486e-8c3b-0fafa5a71405"
+            return "select_store", {"storeId": str(store_id)}
+
+        if name == "create_online_payment_order":
+            return "create_online_payment_order", {
+                "confirmOrder": bool(args.get("confirmOrder", False)),
+                "riderTip": args.get("riderTip", 0),
+            }
+
+        if name == "check_payment_status":
+            order_id = args.get("orderId") or "01a1a5b5-e7af-7859-b947-fbd84d46e7b5"
+            return "check_payment_status", {"orderId": str(order_id)}
 
         if name in ("place_order", "checkout"):
             return "create_order", {
@@ -1068,6 +1041,34 @@ class ZeptoMCPClient:
                 ]
             }
 
+        elif name == "select_store":
+            return {
+                "store_id": str(args.get("storeId", "a3fa87d4-5821-486e-8c3b-0fafa5a71405")),
+                "status": "selected",
+                "serving_locality": "Dadar, Mumbai",
+            }
+
+        elif name == "get_payment_methods":
+            return {
+                "payment_methods": ["COD", "UPI", "CARDS", "NET_BANKING", "ZEPTO_CASH"],
+                "default_method": "COD",
+            }
+
+        elif name == "create_online_payment_order":
+            return {
+                "order_id": "z_ord_online_9918",
+                "status": "preview" if not args.get("confirmOrder") else "confirmed",
+                "payment_url": "https://pay.zeptonow.com/order/z_ord_online_9918",
+                "amount_payable": 69.0,
+            }
+
+        elif name == "check_payment_status":
+            return {
+                "order_id": str(args.get("orderId", "01a1a5b5-e7af-7859-b947-fbd84d46e7b5")),
+                "payment_status": "PAID",
+                "method": "UPI",
+            }
+
         return {"name": name, "status": "executed", "arguments": args}
 
     # Backward-compatible convenience methods for orchestrator
@@ -1109,47 +1110,75 @@ class ZeptoMCPClient:
         res = await self.call_tool("get_product_details", {"product_id": product_id})
         return res.get("response", {})
 
-    async def get_cart(self) -> dict[str, Any]:
+    async def view_cart(self) -> dict[str, Any]:
+        """View current active cart contents and bill summary."""
         res = await self.call_tool("view_cart", {})
         return res.get("response", {})
 
+    async def get_cart(self) -> dict[str, Any]:
+        """Alias for view_cart."""
+        return await self.view_cart()
+
     async def add_to_cart(self, product_id: str, quantity: int = 1) -> dict[str, Any]:
-        res = await self.call_tool("update_cart", {"item_id": product_id, "quantity": quantity})
+        """Add product to cart using official update_cart tool."""
+        res = await self.call_tool("update_cart", {"productVariantId": product_id, "quantity": quantity})
         return res.get("response", {})
 
     async def update_cart(self, item_id: str, quantity: int) -> dict[str, Any]:
-        res = await self.call_tool("update_cart", {"item_id": item_id, "quantity": quantity})
+        """Update or remove item quantity using official update_cart tool."""
+        res = await self.call_tool("update_cart", {"productVariantId": item_id, "quantity": quantity})
         return res.get("response", {})
 
     async def remove_from_cart(self, item_id: str) -> dict[str, Any]:
-        res = await self.call_tool("update_cart", {"item_id": item_id, "quantity": 0})
-        return res.get("response", {})
+        """Remove item from cart by setting quantity to 0."""
+        return await self.update_cart(item_id, 0)
 
     async def clear_cart(self) -> dict[str, Any]:
+        """Clear cart session."""
         res = await self.call_tool("clear_cart", {})
         return res.get("response", {})
 
+    async def get_location_serviceability(
+        self, latitude: float = 19.0191, longitude: float = 72.8552
+    ) -> dict[str, Any]:
+        """Check delivery serviceability for geographic coordinates."""
+        res = await self.call_tool("get_location_serviceability", {"latitude": latitude, "longitude": longitude})
+        return res.get("response", {})
+
     async def search_location(self, query: str, pincode: str | None = None) -> dict[str, Any]:
-        args = {"query": query}
+        """Alias resolving location to serviceability."""
+        args: dict[str, Any] = {"query": query}
         if pincode:
             args["pincode"] = pincode
         res = await self.call_tool("get_location_serviceability", args)
         return res.get("response", {})
 
-    async def place_order(self, payment_method: str = "cod", address_id: str | None = None) -> dict[str, Any]:
-        args = {"payment_method": payment_method}
-        if address_id:
-            args["address_id"] = address_id
-        res = await self.call_tool("create_order", args)
+    async def create_order(self, confirm_order: bool = False, rider_tip: int = 0) -> dict[str, Any]:
+        """Create or preview an order via official create_order tool."""
+        res = await self.call_tool("create_order", {"confirmOrder": confirm_order, "riderTip": rider_tip})
         return res.get("response", {})
 
-    async def get_order_status(self, order_id: str) -> dict[str, Any]:
+    async def place_order(self, payment_method: str = "cod", address_id: str | None = None) -> dict[str, Any]:
+        """Alias for create_order."""
+        return await self.create_order(confirm_order=False)
+
+    async def get_order_detail(self, order_id: str) -> dict[str, Any]:
+        """Fetch detailed order tracking and rider info."""
         res = await self.call_tool("get_order_detail", {"orderId": order_id})
         return res.get("response", {})
 
-    async def list_orders(self, limit: int = 5) -> list[dict[str, Any]]:
+    async def get_order_status(self, order_id: str) -> dict[str, Any]:
+        """Alias for get_order_detail."""
+        return await self.get_order_detail(order_id)
+
+    async def list_order_history(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Retrieve past order history."""
         res = await self.call_tool("list_order_history", {"limit": limit})
         return res.get("response", {}).get("orders", [])
+
+    async def list_orders(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Alias for list_order_history."""
+        return await self.list_order_history(limit)
 
 
 zepto_client = ZeptoMCPClient()
