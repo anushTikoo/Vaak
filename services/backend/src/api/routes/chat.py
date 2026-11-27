@@ -11,4 +11,5 @@ async def send_chat_message(request: ChatMessageRequest):
     return await voice_orchestrator.process_user_intent(
         user_message=request.message,
         session_id=request.session_id,
+        language=request.language,
     )
