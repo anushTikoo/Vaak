@@ -15,6 +15,14 @@ export interface ProductCardData {
   is_available: boolean;
 }
 
+export interface ToolExecutionLog {
+  tool_name: string;
+  arguments?: Record<string, any>;
+  status: 'success' | 'error' | 'guardrail_intercepted';
+  execution_time_ms?: number;
+  summary?: string;
+}
+
 export interface ChatResponse {
   session_id: string;
   reply_text: string;
@@ -25,6 +33,7 @@ export interface ChatResponse {
   audio_base64?: string | null;
   order_guardrail_active?: boolean;
   tools_invoked?: string[];
+  tool_logs?: ToolExecutionLog[];
 }
 
 export interface CartItemData {

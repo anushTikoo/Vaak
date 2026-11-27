@@ -42,6 +42,7 @@ async def test_sarvam_105b_smart_routing_greeting_skips_zepto_mcp(client):
         # Zepto MCP must NOT be called for general greetings
         mock_call_tool.assert_not_called()
         assert data["tools_invoked"] == []
+        assert data["tool_logs"] == []
         assert len(data["suggested_products"]) == 0
         assert data["action_type"] == "none"
         assert len(data["reply_text"]) > 0
@@ -135,6 +136,11 @@ async def test_sarvam_105b_agent_mixed_greeting_and_grocery_query(client):
     assert len(data["suggested_products"]) >= 1
     assert any("milk" in p["name"].lower() or "doodh" in p["name"].lower() for p in data["suggested_products"])
     assert data["action_type"] == "clarification_needed"
+    assert "tool_logs" in data
+    assert len(data["tool_logs"]) >= 1
+    assert data["tool_logs"][0]["tool_name"] == "search_products"
+    assert data["tool_logs"][0]["status"] == "success"
+    assert "items found" in (data["tool_logs"][0]["summary"] or "")
 
 
 @pytest.mark.asyncio

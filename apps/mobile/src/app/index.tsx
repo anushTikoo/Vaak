@@ -15,7 +15,16 @@ import { useRouter } from 'expo-router';
 import { createAudioPlayer, setAudioModeAsync, AudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
-import { VaakApi, ProductCardData, CartData } from '@/services/api';
+import { VaakApi, ProductCardData, CartData, ToolExecutionLog } from '@/services/api';
+
+interface ConversationTurnLog {
+  id: string;
+  timestamp: string;
+  userQuery: string;
+  toolsInvoked: string[];
+  toolLogs: ToolExecutionLog[];
+  assistantReply: string;
+}
 
 export default function VoiceHomeScreen() {
   const router = useRouter();
@@ -45,6 +54,11 @@ export default function VoiceHomeScreen() {
   const [isPlayingRecording, setIsPlayingRecording] = useState<boolean>(false);
   const [showOrderSummary, setShowOrderSummary] = useState<boolean>(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+
+  // Live Zepto MCP Activity State
+  const [recentToolLogs, setRecentToolLogs] = useState<ToolExecutionLog[]>([]);
+  const [conversationTurnLogs, setConversationTurnLogs] = useState<ConversationTurnLog[]>([]);
+  const [showActivityModal, setShowActivityModal] = useState<boolean>(false);
 
   // Diagnostics & Mic Hardware Verification State
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
@@ -462,6 +476,28 @@ export default function VoiceHomeScreen() {
             }
             setAssistantReply(chatRes.reply_text);
             setSuggestedProducts(chatRes.suggested_products);
+
+            // Record Zepto MCP live tool logs for frontend UI inspection
+            const logs: ToolExecutionLog[] =
+              chatRes.tool_logs && chatRes.tool_logs.length > 0
+                ? chatRes.tool_logs
+                : (chatRes.tools_invoked || []).map((t) => ({
+                    tool_name: t,
+                    status: 'success' as const,
+                    summary: `Invoked Zepto MCP tool '${t}'`,
+                  }));
+            setRecentToolLogs(logs);
+
+            const newTurnLog: ConversationTurnLog = {
+              id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              userQuery: result.transcript,
+              toolsInvoked: chatRes.tools_invoked || [],
+              toolLogs: logs,
+              assistantReply: chatRes.reply_text,
+            };
+            setConversationTurnLogs((prev) => [newTurnLog, ...prev.slice(0, 19)]);
+
             if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
               setShowOrderSummary(true);
             }
@@ -637,6 +673,28 @@ export default function VoiceHomeScreen() {
       }
       setAssistantReply(chatRes.reply_text);
       setSuggestedProducts(chatRes.suggested_products);
+
+      // Record Zepto MCP live tool logs for simulated query
+      const logs: ToolExecutionLog[] =
+        chatRes.tool_logs && chatRes.tool_logs.length > 0
+          ? chatRes.tool_logs
+          : (chatRes.tools_invoked || []).map((t) => ({
+              tool_name: t,
+              status: 'success' as const,
+              summary: `Invoked Zepto MCP tool '${t}'`,
+            }));
+      setRecentToolLogs(logs);
+
+      const newSimTurnLog: ConversationTurnLog = {
+        id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        userQuery: query,
+        toolsInvoked: chatRes.tools_invoked || [],
+        toolLogs: logs,
+        assistantReply: chatRes.reply_text,
+      };
+      setConversationTurnLogs((prev) => [newSimTurnLog, ...prev.slice(0, 19)]);
+
       if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
         setShowOrderSummary(true);
       }
@@ -849,6 +907,84 @@ export default function VoiceHomeScreen() {
           )}
         </View>
 
+        {/* Live Zepto MCP Tool Activity Section */}
+        <View style={styles.mcpActivityCard}>
+          <View style={styles.mcpActivityHeader}>
+            <View style={styles.mcpHeaderTitleRow}>
+              <View style={[styles.liveDot, recentToolLogs.length > 0 && styles.liveDotActive]} />
+              <Text style={styles.mcpActivityTitle}>Zepto MCP Tool Activity</Text>
+            </View>
+            {conversationTurnLogs.length > 0 && (
+              <TouchableOpacity
+                style={styles.historyBtn}
+                onPress={() => setShowActivityModal(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.historyBtnText}>📜 History ({conversationTurnLogs.length})</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {recentToolLogs.length > 0 ? (
+            <View style={styles.mcpLogsContainer}>
+              {recentToolLogs.map((log, idx) => {
+                const isGuardrail = log.status === 'guardrail_intercepted';
+                const isError = log.status === 'error';
+                return (
+                  <View
+                    key={`${log.tool_name}_${idx}`}
+                    style={[
+                      styles.mcpLogItem,
+                      isGuardrail && styles.mcpLogItemGuardrail,
+                      isError && styles.mcpLogItemError,
+                    ]}
+                  >
+                    <View style={styles.mcpLogTopRow}>
+                      <View style={styles.mcpToolNameBadge}>
+                        <Text style={styles.mcpToolNameText}>⚡ {log.tool_name}</Text>
+                      </View>
+                      <View style={styles.mcpStatusBadgeRow}>
+                        {log.execution_time_ms !== undefined && log.execution_time_ms !== null && (
+                          <Text style={styles.mcpLatencyText}>{Math.round(log.execution_time_ms)}ms</Text>
+                        )}
+                        <Text
+                          style={[
+                            styles.mcpStatusPill,
+                            isGuardrail
+                              ? styles.mcpStatusPillGuardrail
+                              : isError
+                              ? styles.mcpStatusPillError
+                              : styles.mcpStatusPillSuccess,
+                          ]}
+                        >
+                          {isGuardrail ? '🛡️ Guardrail Intercept' : isError ? '❌ Error' : '✓ Live MCP 200'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {log.summary && <Text style={styles.mcpSummaryText}>{log.summary}</Text>}
+
+                    {log.arguments && Object.keys(log.arguments).length > 0 && (
+                      <View style={styles.mcpArgsBox}>
+                        <Text style={styles.mcpArgsLabel}>Params:</Text>
+                        <Text style={styles.mcpArgsText} numberOfLines={2}>
+                          {JSON.stringify(log.arguments)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={styles.mcpIdleBox}>
+              <Text style={styles.mcpIdleText}>
+                🧠 <Text style={{ fontWeight: '700' }}>Smart Intent Routing Active:</Text> Pure greetings and small talk skip MCP calls to protect against server bombardment. Live tool calls will log here when you ask to search groceries, view cart, or checkout.
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* Central Voice HUD */}
         <View style={styles.voiceSection}>
           <Animated.View
@@ -1024,6 +1160,104 @@ export default function VoiceHomeScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* Full Zepto MCP Tool Activity History Modal */}
+      {showActivityModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.activityModalCard}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>🛠️ Zepto MCP Tool Call History</Text>
+                <Text style={styles.activityModalSubtitle}>
+                  Recorded across {conversationTurnLogs.length} conversational turns
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeModalButton}
+                onPress={() => setShowActivityModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.closeModalText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.activityHistoryList} showsVerticalScrollIndicator={true}>
+              {conversationTurnLogs.map((turn, tIdx) => (
+                <View key={turn.id} style={styles.historyTurnItem}>
+                  <View style={styles.historyTurnHeader}>
+                    <Text style={styles.historyTimestamp}>
+                      Turn #{conversationTurnLogs.length - tIdx} • {turn.timestamp}
+                    </Text>
+                    <View
+                      style={[
+                        styles.historyToolBadgePill,
+                        turn.toolLogs.length > 0
+                          ? styles.historyToolBadgePillActive
+                          : styles.historyToolBadgePillIdle,
+                      ]}
+                    >
+                      <Text style={styles.historyToolBadgePillText}>
+                        {turn.toolLogs.length > 0 ? `⚡ ${turn.toolLogs.length} MCP Calls` : '💬 Chit-Chat'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.historyUserQuery}>🗣️ "{turn.userQuery}"</Text>
+
+                  {turn.toolLogs.length > 0 ? (
+                    <View style={styles.historyLogsSublist}>
+                      {turn.toolLogs.map((log, lIdx) => (
+                        <View key={`${turn.id}_log_${lIdx}`} style={styles.historySublogItem}>
+                          <View style={styles.historySublogTopRow}>
+                            <Text style={styles.historySublogToolName}>⚡ {log.tool_name}</Text>
+                            <View style={styles.historySublogBadgeRow}>
+                              {log.execution_time_ms !== undefined && log.execution_time_ms !== null && (
+                                <Text style={styles.historySublogLatency}>
+                                  {Math.round(log.execution_time_ms)}ms
+                                </Text>
+                              )}
+                              <Text
+                                style={[
+                                  styles.historySublogStatus,
+                                  log.status === 'guardrail_intercepted'
+                                    ? styles.historySublogStatusGuardrail
+                                    : log.status === 'error'
+                                    ? styles.historySublogStatusError
+                                    : styles.historySublogStatusSuccess,
+                                ]}
+                              >
+                                {log.status === 'guardrail_intercepted'
+                                  ? '🛡️ Guardrail'
+                                  : log.status === 'error'
+                                  ? '❌ Error'
+                                  : '✓ 200 OK'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          {log.summary && <Text style={styles.historySublogSummary}>{log.summary}</Text>}
+
+                          {log.arguments && Object.keys(log.arguments).length > 0 && (
+                            <View style={styles.historyArgsContainer}>
+                              <Text style={styles.historyArgsCode}>
+                                {JSON.stringify(log.arguments, null, 1).replace(/[\{\}\n]/g, '').trim()}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={styles.historyNoToolsNotice}>
+                      Zero MCP calls invoked (Smart Intent Routing preserved upstream rate limits)
+                    </Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1554,5 +1788,325 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+
+  // MCP Activity Card & Logs Styles
+  mcpActivityCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  mcpActivityHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  mcpHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#64748B',
+  },
+  liveDotActive: {
+    backgroundColor: '#10B981',
+  },
+  mcpActivityTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    letterSpacing: 0.3,
+  },
+  historyBtn: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  historyBtnText: {
+    fontSize: 11,
+    color: '#A5B4FC',
+    fontWeight: '600',
+  },
+  mcpLogsContainer: {
+    gap: 8,
+  },
+  mcpLogItem: {
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    padding: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#10B981',
+  },
+  mcpLogItemGuardrail: {
+    borderLeftColor: '#F59E0B',
+  },
+  mcpLogItemError: {
+    borderLeftColor: '#EF4444',
+  },
+  mcpLogTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  mcpToolNameBadge: {
+    backgroundColor: '#312E81',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  mcpToolNameText: {
+    color: '#C7D2FE',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  mcpStatusBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mcpLatencyText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  mcpStatusPill: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  mcpStatusPillSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    color: '#34D399',
+  },
+  mcpStatusPillGuardrail: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    color: '#FBBF24',
+  },
+  mcpStatusPillError: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    color: '#F87171',
+  },
+  mcpSummaryText: {
+    fontSize: 12,
+    color: '#CBD5E1',
+    marginBottom: 4,
+  },
+  mcpArgsBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    marginTop: 2,
+  },
+  mcpArgsLabel: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  mcpArgsText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    flex: 1,
+  },
+  mcpIdleBox: {
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    padding: 10,
+  },
+  mcpIdleText: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+  },
+
+  // Modal Styles
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    zIndex: 999,
+  },
+  activityModalCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: '#475569',
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  closeModalButton: {
+    backgroundColor: '#334155',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeModalText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  activityModalSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  activityHistoryList: {
+    marginTop: 12,
+  },
+  historyTurnItem: {
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  historyTurnHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  historyTimestamp: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  historyToolBadgePill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  historyToolBadgePillActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+  },
+  historyToolBadgePillIdle: {
+    backgroundColor: 'rgba(100, 116, 139, 0.2)',
+  },
+  historyToolBadgePillText: {
+    fontSize: 10,
+    color: '#A5B4FC',
+    fontWeight: '700',
+  },
+  historyUserQuery: {
+    fontSize: 13,
+    color: '#F1F5F9',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  historyLogsSublist: {
+    gap: 6,
+  },
+  historySublogItem: {
+    backgroundColor: '#1E293B',
+    borderRadius: 6,
+    padding: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#6366F1',
+  },
+  historySublogTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  historySublogToolName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#C7D2FE',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  historySublogBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  historySublogLatency: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  historySublogStatus: {
+    fontSize: 9,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+  },
+  historySublogStatusSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    color: '#34D399',
+  },
+  historySublogStatusGuardrail: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    color: '#FBBF24',
+  },
+  historySublogStatusError: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    color: '#F87171',
+  },
+  historySublogSummary: {
+    fontSize: 11,
+    color: '#CBD5E1',
+    marginBottom: 2,
+  },
+  historyArgsContainer: {
+    backgroundColor: '#0F172A',
+    borderRadius: 4,
+    padding: 4,
+    marginTop: 2,
+  },
+  historyArgsCode: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  historyNoToolsNotice: {
+    fontSize: 11,
+    color: '#64748B',
+    fontStyle: 'italic',
   },
 });
