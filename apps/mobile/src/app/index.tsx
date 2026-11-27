@@ -53,9 +53,70 @@ export default function VoiceHomeScreen() {
   const peakDiagnosticLevelRef = useRef<number>(-160);
   const [lastFileSizeKB, setLastFileSizeKB] = useState<number | null>(null);
 
-  // References for active audio player and session
+  // References for active audio players, session, abort controller, and request generation counter
   const activeAudioPlayerRef = useRef<AudioPlayer | null>(null);
+  const activeWebAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeSessionIdRef = useRef<string | undefined>(undefined);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef<number>(0);
+  const isRecordingRef = useRef<boolean>(false);
+
+  // Stop all audio playback across Expo audio, web Audio elements, and native Speech synthesis
+  const stopAllAudio = useCallback(() => {
+    try {
+      Speech.stop();
+    } catch {}
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+
+    if (activeWebAudioRef.current) {
+      try {
+        activeWebAudioRef.current.pause();
+        activeWebAudioRef.current.currentTime = 0;
+        activeWebAudioRef.current.src = '';
+      } catch {}
+      activeWebAudioRef.current = null;
+    }
+
+    if (activeAudioPlayerRef.current) {
+      try {
+        activeAudioPlayerRef.current.pause();
+        if (typeof (activeAudioPlayerRef.current as any).remove === 'function') {
+          (activeAudioPlayerRef.current as any).remove();
+        }
+      } catch {}
+      activeAudioPlayerRef.current = null;
+    }
+
+    setIsPlayingRecording(false);
+  }, []);
+
+  // Sync isRecordingRef and enforce barge-in interruption whenever mic becomes active
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+    if (isRecording) {
+      // Clean barge-in: kill all active audio and cancel in-flight requests immediately
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      stopAllAudio();
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+      }
+    }
+  }, [isRecording, stopAllAudio]);
+
+  // Cleanup all audio and in-flight requests on unmount
+  useEffect(() => {
+    return () => {
+      stopAllAudio();
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+      }
+    };
+  }, [stopAllAudio]);
 
   // Keep track of the last recorded file size in KB
   useEffect(() => {
@@ -79,69 +140,132 @@ export default function VoiceHomeScreen() {
   }, []);
 
   // Speak assistant text using Sarvam AI bulbul:v4-flash Indian TTS in the matching language
-  const speakAssistant = useCallback(async (text: string, language: string = 'auto') => {
-    if (!isVoiceFeedbackEnabled || !text || text.trim() === '') return;
-    try {
-      Speech.stop();
-      if (activeAudioPlayerRef.current) {
-        try {
-          activeAudioPlayerRef.current.pause();
-        } catch {}
+  const speakAssistant = useCallback(
+    async (
+      text: string,
+      language: string = 'auto',
+      audioBase64?: string | null,
+      requestId?: number
+    ) => {
+      const currentReqId = requestId !== undefined ? requestId : ++requestIdRef.current;
+      if (!isVoiceFeedbackEnabled || !text || text.trim() === '') return;
+      if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
+
+      if (requestId === undefined) {
+        if (activeAbortControllerRef.current) {
+          activeAbortControllerRef.current.abort();
+        }
+        activeAbortControllerRef.current = new AbortController();
       }
 
-      const targetLang =
-        language !== 'auto'
-          ? language
-          : isHindiText(text)
-          ? 'hi-IN'
-          : 'en-IN';
-
-      // 1. Try Sarvam AI Indian TTS via backend with matching language
       try {
-        const ttsRes = await VaakApi.textToSpeech(text, targetLang);
-        if (ttsRes && ttsRes.audio_base64) {
-          const audioSrc = `data:audio/wav;base64,${ttsRes.audio_base64}`;
+        stopAllAudio();
+        if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
+
+        const targetLang =
+          language !== 'auto'
+            ? language
+            : isHindiText(text)
+            ? 'hi-IN'
+            : 'en-IN';
+
+        // 1. If audio_base64 is already provided in response, play directly to save latency
+        if (audioBase64) {
+          const audioSrc = `data:audio/wav;base64,${audioBase64}`;
           if (Platform.OS === 'web' && typeof Audio !== 'undefined') {
             const webAudio = new Audio(audioSrc);
+            activeWebAudioRef.current = webAudio;
             webAudio.volume = 1.0;
-            await webAudio.play();
+            webAudio.onended = () => {
+              if (activeWebAudioRef.current === webAudio) {
+                activeWebAudioRef.current = null;
+              }
+            };
+            if (!isRecordingRef.current && currentReqId === requestIdRef.current) {
+              await webAudio.play();
+            }
             return;
           } else {
             const player = createAudioPlayer(audioSrc);
             activeAudioPlayerRef.current = player;
             player.volume = 1.0;
-            player.play();
+            if (!isRecordingRef.current && currentReqId === requestIdRef.current) {
+              player.play();
+            }
             return;
           }
         }
-      } catch (sarvamErr) {
-        console.warn('Sarvam TTS API failed, falling back to local speech:', sarvamErr);
-      }
 
-      // 2. Fallback to native or browser Speech synthesis
-      if (Platform.OS !== 'web') {
-        await setAudioModeAsync({
-          playsInSilentMode: true,
-          interruptionMode: 'duckOthers',
-        });
-        Speech.speak(text, {
-          language: targetLang,
-          pitch: 1.0,
-          rate: 0.95,
-          volume: 1.0,
-        });
-      } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.resume();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = targetLang;
-        utterance.rate = 1.0;
-        window.speechSynthesis.speak(utterance);
+        // 2. Try Sarvam AI Indian TTS via backend with matching language
+        try {
+          const ttsRes = await VaakApi.textToSpeech(
+            text,
+            targetLang,
+            activeAbortControllerRef.current?.signal
+          );
+          if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
+          if (ttsRes && ttsRes.audio_base64) {
+            const audioSrc = `data:audio/wav;base64,${ttsRes.audio_base64}`;
+            if (Platform.OS === 'web' && typeof Audio !== 'undefined') {
+              const webAudio = new Audio(audioSrc);
+              activeWebAudioRef.current = webAudio;
+              webAudio.volume = 1.0;
+              webAudio.onended = () => {
+                if (activeWebAudioRef.current === webAudio) {
+                  activeWebAudioRef.current = null;
+                }
+              };
+              if (!isRecordingRef.current && currentReqId === requestIdRef.current) {
+                await webAudio.play();
+              }
+              return;
+            } else {
+              const player = createAudioPlayer(audioSrc);
+              activeAudioPlayerRef.current = player;
+              player.volume = 1.0;
+              if (!isRecordingRef.current && currentReqId === requestIdRef.current) {
+                player.play();
+              }
+              return;
+            }
+          }
+        } catch (sarvamErr: any) {
+          if (sarvamErr?.name === 'AbortError' || currentReqId !== requestIdRef.current) return;
+          console.warn('Sarvam TTS API failed, falling back to local speech:', sarvamErr);
+        }
+
+        if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
+
+        // 3. Fallback to native or browser Speech synthesis
+        if (Platform.OS !== 'web') {
+          await setAudioModeAsync({
+            playsInSilentMode: true,
+            interruptionMode: 'duckOthers',
+          });
+          if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
+          Speech.speak(text, {
+            language: targetLang,
+            pitch: 1.0,
+            rate: 0.95,
+            volume: 1.0,
+          });
+        } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.resume();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = targetLang;
+          utterance.rate = 1.0;
+          if (!isRecordingRef.current && currentReqId === requestIdRef.current) {
+            window.speechSynthesis.speak(utterance);
+          }
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || currentReqId !== requestIdRef.current) return;
+        console.warn('Speech synthesis error:', err);
       }
-    } catch (err) {
-      console.warn('Speech synthesis error:', err);
-    }
-  }, [isVoiceFeedbackEnabled, isHindiText]);
+    },
+    [isVoiceFeedbackEnabled, isHindiText, stopAllAudio]
+  );
 
   // Check backend health and fetch initial cart
   const checkBackend = useCallback(async () => {
@@ -190,11 +314,26 @@ export default function VoiceHomeScreen() {
     }
   }, [metering, isDiagnosticRunning]);
 
-  // Handle voice recording toggle
+  // Handle voice recording toggle with clean barge-in interruption
   const handleMicPress = async () => {
     if (isRecording) {
+      // User tapped mic to finish speaking and submit request
       setIsProcessing(true);
+      stopAllAudio();
+
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+      }
+      const abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
+      const currentRequestId = ++requestIdRef.current;
+
       const uri = await stopRecording();
+      if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) {
+        setIsProcessing(false);
+        return;
+      }
+
       if (uri) {
         const fileSize = await VaakApi.getAudioFileSize(uri);
         if (fileSize !== null) {
@@ -206,15 +345,19 @@ export default function VoiceHomeScreen() {
           const noAudioMsg =
             "I couldn't hear any speech (audio was empty). Please ensure your emulator microphone is enabled and speak again.";
           setAssistantReply(noAudioMsg);
-          speakAssistant(noAudioMsg);
+          speakAssistant(noAudioMsg, 'auto', null, currentRequestId);
           return;
         }
 
         try {
           // Transcribe user speech via backend
-          const result = await VaakApi.uploadAudio(uri);
+          const result = await VaakApi.uploadAudio(uri, activeSessionIdRef.current, abortController.signal);
+          if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
+
           setTranscript(result.transcript);
-          activeSessionIdRef.current = result.session_id;
+          if (result.session_id && !activeSessionIdRef.current) {
+            activeSessionIdRef.current = result.session_id;
+          }
 
           const detectedLang = result.detected_language || 'auto';
           const isHindi = isHindiText(result.transcript, detectedLang);
@@ -225,7 +368,7 @@ export default function VoiceHomeScreen() {
               ? 'मुझे आपकी आवाज़ साफ़ सुनाई नहीं दी। कृपया माइक दबाकर अपना ऑर्डर बोलें।'
               : "I couldn't hear any speech clearly. Please tap the mic and speak your order.";
             setAssistantReply(noAudioMsg);
-            speakAssistant(noAudioMsg, langCode);
+            speakAssistant(noAudioMsg, langCode, null, currentRequestId);
             return;
           }
 
@@ -251,6 +394,7 @@ export default function VoiceHomeScreen() {
           if (isAffirmative && suggestedProducts.length > 0) {
             // Automatically add all suggested products to cart via voice
             for (const prod of suggestedProducts) {
+              if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
               await VaakApi.addCartItem({
                 product_id: prod.product_id,
                 name: prod.name,
@@ -260,7 +404,9 @@ export default function VoiceHomeScreen() {
                 image_url: prod.image_url,
               });
             }
+            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
             const updatedCart = await VaakApi.getCart();
+            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
             setCart(updatedCart);
 
             const itemsAdded = suggestedProducts.map((p) => p.name).join(isHindi ? ' और ' : ' and ');
@@ -269,21 +415,21 @@ export default function VoiceHomeScreen() {
               : `Added ${itemsAdded} to your cart. Cart total is ₹${updatedCart.subtotal.toFixed(0)}. Say "place order" when you're ready to checkout.`;
             setAssistantReply(replyMsg);
             setSuggestedProducts([]);
-            speakAssistant(replyMsg, langCode);
+            speakAssistant(replyMsg, langCode, null, currentRequestId);
           } else if (isOrderIntent) {
             if (cart.total_items === 0) {
               const replyMsg = isHindi
                 ? 'आपका कार्ट अभी खाली है। आज आप क्या किराना मंगाना चाहेंगे?'
                 : 'Your cart is currently empty. What groceries would you like to order today?';
               setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode);
+              speakAssistant(replyMsg, langCode, null, currentRequestId);
             } else {
               setShowOrderSummary(true);
               const replyMsg = isHindi
                 ? `आपका ऑर्डर सारांश तैयार है। ${cart.total_items} सामान का कुल मूल्य ₹${cart.subtotal.toFixed(0)} है। कृपया स्क्रीन देखें और "कन्फर्म ऑर्डर" दबाएँ।`
                 : `Your order summary is ready with ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(0)}. Please review your screen and tap Confirm Order to place it on Zepto.`;
               setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode);
+              speakAssistant(replyMsg, langCode, null, currentRequestId);
             }
           } else if (isCartQuery) {
             if (cart.total_items === 0) {
@@ -291,41 +437,69 @@ export default function VoiceHomeScreen() {
                 ? 'आपका कार्ट खाली है। आज आप क्या मंगाना चाहेंगे?'
                 : 'Your cart is empty. What would you like to order today?';
               setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode);
+              speakAssistant(replyMsg, langCode, null, currentRequestId);
             } else {
               const itemNames = cart.items.map((i) => `${i.quantity} ${i.name}`).join(isHindi ? ', ' : ', ');
               const replyMsg = isHindi
                 ? `आपके कार्ट में ${cart.total_items} सामान हैं: ${itemNames}, कुल ₹${cart.subtotal.toFixed(0)}। ऑर्डर करने के लिए "ऑर्डर प्लेस करो" कहें।`
                 : `You have ${cart.total_items} items in your cart: ${itemNames}, totaling ₹${cart.subtotal.toFixed(0)}. Say "place order" to review and checkout.`;
               setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode);
+              speakAssistant(replyMsg, langCode, null, currentRequestId);
             }
           } else {
             // General grocery product search intent in user's spoken language
-            const chatRes = await VaakApi.sendChatMessage(result.transcript, result.session_id, langCode);
+            const chatRes = await VaakApi.sendChatMessage(
+              result.transcript,
+              activeSessionIdRef.current,
+              langCode,
+              abortController.signal,
+              isVoiceFeedbackEnabled
+            );
+            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
+
+            if (chatRes.session_id) {
+              activeSessionIdRef.current = chatRes.session_id;
+            }
             setAssistantReply(chatRes.reply_text);
             setSuggestedProducts(chatRes.suggested_products);
-            speakAssistant(chatRes.reply_text, chatRes.detected_language || langCode);
+            if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
+              setShowOrderSummary(true);
+            }
+            speakAssistant(
+              chatRes.spoken_text || chatRes.reply_text,
+              chatRes.detected_language || langCode,
+              chatRes.audio_base64,
+              currentRequestId
+            );
           }
-        } catch (err) {
+        } catch (err: any) {
+          if (err?.name === 'AbortError' || abortController.signal.aborted || currentRequestId !== requestIdRef.current) {
+            return;
+          }
           console.error('Error processing audio:', err);
           const errMsg = 'I heard your voice, but had trouble connecting to the backend. Please check connection.';
           setAssistantReply(errMsg);
-          speakAssistant(errMsg);
+          speakAssistant(errMsg, 'auto', null, currentRequestId);
         } finally {
-          setIsProcessing(false);
+          if (currentRequestId === requestIdRef.current) {
+            setIsProcessing(false);
+          }
         }
       } else {
-        setIsProcessing(false);
+        if (currentRequestId === requestIdRef.current) {
+          setIsProcessing(false);
+        }
       }
     } else {
-      // Before starting recording, stop any ongoing TTS speech so mic doesn't record assistant audio
-      Speech.stop();
-      if (activeAudioPlayerRef.current) {
-        try {
-          activeAudioPlayerRef.current.pause();
-        } catch {}
+      // User tapped mic to start speaking -> BARGE-IN INTERRUPTION:
+      // Immediately abort previous in-flight requests and kill active audio playback
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+        activeAbortControllerRef.current = null;
       }
+      requestIdRef.current += 1;
+      stopAllAudio();
+      setIsProcessing(false);
 
       if (!hasPermission) {
         const granted = await requestPermission();
@@ -355,18 +529,12 @@ export default function VoiceHomeScreen() {
     }
 
     try {
-      Speech.stop();
+      stopAllAudio();
       setIsPlayingRecording(true);
       await setAudioModeAsync({
         playsInSilentMode: true,
         interruptionMode: 'duckOthers',
       });
-
-      if (activeAudioPlayerRef.current) {
-        try {
-          activeAudioPlayerRef.current.pause();
-        } catch {}
-      }
 
       const player = createAudioPlayer(recordedUri);
       activeAudioPlayerRef.current = player;
@@ -393,11 +561,9 @@ export default function VoiceHomeScreen() {
     setDiagnosticResult('🎙️ Initializing microphone...');
 
     try {
-      Speech.stop();
-      if (activeAudioPlayerRef.current) {
-        try {
-          activeAudioPlayerRef.current.pause();
-        } catch {}
+      stopAllAudio();
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
       }
 
       if (isRecording) {
@@ -444,27 +610,58 @@ export default function VoiceHomeScreen() {
     }
   };
 
-  // Simulate a realistic grocery query directly into the AI pipeline
+  // Simulate a realistic grocery query directly into the AI pipeline with barge-in support
   const handleSimulateVoiceQuery = async (query = 'Add two packets of Nandini milk and brown bread') => {
+    if (activeAbortControllerRef.current) {
+      activeAbortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    activeAbortControllerRef.current = abortController;
+    const currentRequestId = ++requestIdRef.current;
+    stopAllAudio();
+
     try {
       setIsProcessing(true);
-      Speech.stop();
       setTranscript(query);
-      const chatRes = await VaakApi.sendChatMessage(query, activeSessionIdRef.current);
-      activeSessionIdRef.current = chatRes.session_id;
+      const chatRes = await VaakApi.sendChatMessage(
+        query,
+        activeSessionIdRef.current,
+        'auto',
+        abortController.signal,
+        isVoiceFeedbackEnabled
+      );
+      if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
+
+      if (chatRes.session_id) {
+        activeSessionIdRef.current = chatRes.session_id;
+      }
       setAssistantReply(chatRes.reply_text);
       setSuggestedProducts(chatRes.suggested_products);
-      speakAssistant(chatRes.reply_text);
-    } catch (err) {
+      if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
+        setShowOrderSummary(true);
+      }
+      speakAssistant(
+        chatRes.spoken_text || chatRes.reply_text,
+        chatRes.detected_language || 'auto',
+        chatRes.audio_base64,
+        currentRequestId
+      );
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || abortController.signal.aborted || currentRequestId !== requestIdRef.current) {
+        return;
+      }
       console.error('Simulation error:', err);
       Alert.alert('Simulation Error', 'Failed to simulate voice order query.');
     } finally {
-      setIsProcessing(false);
+      if (currentRequestId === requestIdRef.current) {
+        setIsProcessing(false);
+      }
     }
   };
 
   // Explicit order placement confirmation (never silently places order)
   const handleConfirmOrder = async () => {
+    stopAllAudio();
     try {
       setIsPlacingOrder(true);
       // Remove each item to complete order simulation on backend
@@ -477,7 +674,8 @@ export default function VoiceHomeScreen() {
 
       const confirmedMsg = 'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
       setAssistantReply(confirmedMsg);
-      speakAssistant(confirmedMsg);
+      const reqId = ++requestIdRef.current;
+      speakAssistant(confirmedMsg, 'en-IN', null, reqId);
 
       Alert.alert('⚡ Order Confirmed!', 'Your Zepto groceries are being packed and will be delivered in 10 minutes.');
     } catch (err) {
@@ -535,7 +733,7 @@ export default function VoiceHomeScreen() {
               onPress={() => {
                 const nextState = !isVoiceFeedbackEnabled;
                 setIsVoiceFeedbackEnabled(nextState);
-                if (!nextState) Speech.stop();
+                if (!nextState) stopAllAudio();
               }}
               style={styles.voiceToggle}
             >
@@ -817,7 +1015,8 @@ export default function VoiceHomeScreen() {
                 setShowOrderSummary(true);
                 const msg = `Order summary ready with ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(0)}. Tap Confirm to place.`;
                 setAssistantReply(msg);
-                speakAssistant(msg);
+                const reqId = ++requestIdRef.current;
+                speakAssistant(msg, 'en-IN', null, reqId);
               }}
             >
               <Text style={styles.checkoutVoiceButtonText}>Review & Place →</Text>
