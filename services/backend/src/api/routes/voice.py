@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 
 from src.core.logging import logger
 from src.schemas.voice import (
@@ -31,12 +31,13 @@ async def create_voice_session(request: VoiceSessionRequest):
 async def transcribe_audio_file(
     audio: UploadFile = File(...),
     session_id: UUID | None = None,
+    language: str = Query("auto"),
 ):
     audio_content = await audio.read()
     effective_session_id = session_id or uuid4()
     logger.info(
         f"Received audio upload: {len(audio_content)} bytes, "
-        f"session_id={effective_session_id}, filename={audio.filename}"
+        f"session_id={effective_session_id}, filename={audio.filename}, language={language}"
     )
 
     # Inspect audio duration & validity BEFORE calling Sarvam to prevent unnecessary billing
@@ -49,19 +50,22 @@ async def transcribe_audio_file(
         return TranscribeResponse(
             session_id=effective_session_id,
             transcript="",
-            detected_language="en-IN",
+            detected_language="en-IN" if language == "auto" else language,
             confidence=0.0,
         )
 
     try:
-        result = await sarvam_client.transcribe_audio(audio_content)
+        if language != "auto":
+            result = await sarvam_client.transcribe_audio(audio_content, language=language)
+        else:
+            result = await sarvam_client.transcribe_audio(audio_content)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 400:
             logger.warning(f"Sarvam STT returned 400 (audio empty or zero duration): {e.response.text}")
             return TranscribeResponse(
                 session_id=effective_session_id,
                 transcript="",
-                detected_language="en-IN",
+                detected_language="en-IN" if language == "auto" else language,
                 confidence=0.0,
             )
         raise
@@ -78,10 +82,11 @@ async def transcribe_audio_file(
 async def simulate_voice_utterance(query: str = "Add 2 Nandini milk and bread to my cart"):
     """Simulate a voice transcription for diagnostics and testing in restricted environments."""
     logger.info(f"Simulating voice utterance: '{query}'")
+    detected = sarvam_client.detect_language(query)
     return TranscribeResponse(
         session_id=uuid4(),
         transcript=query,
-        detected_language="en-IN",
+        detected_language=detected,
         confidence=1.0,
     )
 

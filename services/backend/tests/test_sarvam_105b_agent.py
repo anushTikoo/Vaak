@@ -742,3 +742,392 @@ async def test_process_user_intent_handles_empty_choices_safely():
         assert len(res.reply_text) > 0
         assert "Namaste" in res.reply_text
 
+
+@pytest.mark.asyncio
+async def test_single_item_cart_addition_on_followup_add_it_to_cart():
+    """Verify that follow-up 'add it to cart' adds ONLY the single discussed product, never bulk-adding."""
+    from uuid import uuid4
+
+    session_id = uuid4()
+    voice_orchestrator.clear_session(session_id)
+
+    # Turn 1: User asks for Amul calci milk. Mock search returns 2 products.
+    mock_search_products = [
+        {
+            "id": "amul_calci_1",
+            "name": "Amul Calci+ Milk",
+            "price": 35.0,
+            "packSize": "1 L",
+            "imageUrl": "https://img.com/calci.png",
+            "isAvailable": True,
+        },
+        {
+            "id": "other_milk_2",
+            "name": "Mother Dairy Full Cream Milk",
+            "price": 68.0,
+            "packSize": "1 L",
+            "imageUrl": "https://img.com/md.png",
+            "isAvailable": True,
+        },
+    ]
+
+    mock_chat_turn1 = {
+        "id": "cmpl_search",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_search_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_products",
+                                "arguments": json.dumps({"query": "Amul calci milk"}),
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+    mock_chat_turn1_reply = {
+        "id": "cmpl_search_reply",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "I found Amul Calci+ Milk for ₹35. Would you like me to add it to your cart?",
+                },
+            }
+        ],
+    }
+
+    with patch.object(
+        sarvam_client, "chat_completion", side_effect=[mock_chat_turn1, mock_chat_turn1_reply]
+    ), patch.object(
+        zepto_client,
+        "call_tool",
+        return_value={"structuredContent": {"products": mock_search_products}},
+    ):
+        res1 = await voice_orchestrator.process_user_intent(
+            user_message="Amul calci milk chahiye",
+            session_id=session_id,
+            language="hi-IN",
+            generate_audio=False,
+        )
+
+    assert len(res1.suggested_products) == 2
+    state = voice_orchestrator.get_session_state(session_id)
+    assert "amul_calci_1" in state.last_referenced_product_ids
+    assert "Amul Calci+ Milk" in state.last_referenced_product_names
+
+    # Turn 2: Follow-up "add it to cart" in Hindi "haan cart me daal do"
+    tool_calls_executed = []
+
+    mock_chat_turn2 = {
+        "id": "cmpl_add_cart",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_add_1",
+                            "type": "function",
+                            "function": {
+                                "name": "update_cart",
+                                "arguments": json.dumps({"product_id": "amul_calci_1", "quantity": 1}),
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+    mock_chat_turn2_reply = {
+        "id": "cmpl_add_reply",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "मैंने आपके कार्ट में अमूल कैल्सी+ दूध जोड़ दिया है।",
+                },
+            }
+        ],
+    }
+
+    async def mock_call_tool(tool_name, arguments, **kwargs):
+        tool_calls_executed.append((tool_name, arguments))
+        return {"items": [{"product_id": "amul_calci_1", "name": "Amul Calci+ Milk", "quantity": 1}]}
+
+    with patch.object(
+        sarvam_client, "chat_completion", side_effect=[mock_chat_turn2, mock_chat_turn2_reply]
+    ), patch.object(
+        zepto_client, "call_tool", side_effect=mock_call_tool
+    ):
+        res2 = await voice_orchestrator.process_user_intent(
+            user_message="haan daal do",
+            session_id=session_id,
+            language="hi-IN",
+            generate_audio=False,
+        )
+
+    # Verify update_cart was called EXACTLY ONCE for ONLY the single item (never bulk-adding all results)
+    assert len(tool_calls_executed) == 1
+    tool_name, tool_args = tool_calls_executed[0]
+    assert tool_name == "update_cart"
+    assert tool_args.get("product_id") == "amul_calci_1"
+    assert tool_args.get("quantity") == 1
+    assert res2.action_type == "cart_updated"
+
+
+def test_system_prompt_contains_rule_6_precise_cart_selection():
+    """Verify VAAK_105B_SYSTEM_PROMPT includes Rule 6 for precise single-item cart selection."""
+    prompt = VAAK_105B_SYSTEM_PROMPT
+    assert "PRECISE PRODUCT SELECTION WHEN ADDING TO CART" in prompt
+    assert "NEVER BULK-ADD UNLESS REQUESTED" in prompt
+    assert "update_cart ONLY for that single item" in prompt
+    assert "Never add all search results to the cart" in prompt
+
+
+@pytest.mark.asyncio
+async def test_spoken_text_retains_full_two_sentences_up_to_350_chars():
+    """Verify orchestrator's spoken_text retains full 2-sentence responses up to 350 chars without truncation."""
+    from uuid import uuid4
+
+    two_sentence_reply = (
+        "Ji, I have found fresh Amul cow milk (1L) for ₹54 and whole wheat bread (400g) for ₹45. "
+        "Shall I add both of these items to your cart right now, Ji?"
+    )
+    assert len(two_sentence_reply) > 140
+    assert len(two_sentence_reply) < 350
+
+    mock_completion = {
+        "id": "cmpl_long_spoken",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": two_sentence_reply,
+                },
+            }
+        ],
+    }
+
+    with patch.object(sarvam_client, "chat_completion", return_value=mock_completion):
+        res = await voice_orchestrator.process_user_intent(
+            user_message="Do you have milk and bread?",
+            session_id=uuid4(),
+            language="en-IN",
+            generate_audio=False,
+        )
+
+    assert res.spoken_text == two_sentence_reply
+    assert len(res.spoken_text) > 140
+
+
+@pytest.mark.asyncio
+async def test_multilingual_language_retention_across_indic_languages():
+    """Verify Indic languages are retained throughout the VoiceOrchestrator pipeline."""
+    from uuid import uuid4
+
+    test_cases = [
+        ("ta-IN", "எனக்கு இரண்டு பாக்கெட் பால் வேண்டும்"),
+        ("te-IN", "నాకు రెండు లీటర్ల పాలు కావాలి"),
+        ("bn-IN", "আমাকে দুই প্যাকেট দুধ দিন"),
+        ("mr-IN", "मला दोन लिटर दूध पाहिजे"),
+    ]
+
+    for lang_code, user_msg in test_cases:
+        mock_reply = {
+            "id": f"cmpl_{lang_code}",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "Ji, I found milk for you.",
+                    },
+                }
+            ],
+        }
+
+        with patch.object(sarvam_client, "chat_completion", return_value=mock_reply), patch.object(
+            sarvam_client, "translate_text", return_value=f"Translated reply in {lang_code}"
+        ) as mock_translate:
+            res = await voice_orchestrator.process_user_intent(
+                user_message=user_msg,
+                session_id=uuid4(),
+                language=lang_code,
+                generate_audio=False,
+            )
+
+            assert res.detected_language == lang_code
+            mock_translate.assert_awaited_once()
+            assert res.reply_text == f"Translated reply in {lang_code}"
+
+
+@pytest.mark.asyncio
+async def test_session_language_retention_on_short_english_followup():
+    """Verify that after a Hindi turn, a short follow-up retains hi-IN rather than collapsing to en-IN."""
+    from uuid import uuid4
+
+    session_id = uuid4()
+    mock_reply_turn1 = {
+        "id": "cmpl_turn1",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "जी, अमूल कैल्सी दूध मिल गया है। क्या मैं इसे कार्ट में डाल दूँ?",
+                },
+            }
+        ],
+    }
+
+    with patch.object(sarvam_client, "chat_completion", return_value=mock_reply_turn1):
+        res1 = await voice_orchestrator.process_user_intent(
+            user_message="Amul calci milk chahiye",
+            session_id=session_id,
+            language="auto",
+            generate_audio=False,
+        )
+
+    assert res1.detected_language == "hi-IN"
+    state = voice_orchestrator.get_session_state(session_id)
+    assert state.session_language == "hi-IN"
+
+    # Turn 2: User says 'add it to cart' with language='auto'
+    mock_reply_turn2 = {
+        "id": "cmpl_turn2",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "Ji, I have added the milk to your cart.",
+                },
+            }
+        ],
+    }
+
+    with patch.object(sarvam_client, "chat_completion", return_value=mock_reply_turn2), patch.object(
+        sarvam_client, "translate_text", return_value="जी, मैंने कार्ट में दूध जोड़ दिया है।"
+    ) as mock_translate:
+        res2 = await voice_orchestrator.process_user_intent(
+            user_message="add it to cart",
+            session_id=session_id,
+            language="auto",
+            generate_audio=False,
+        )
+
+    assert res2.detected_language == "hi-IN"
+    mock_translate.assert_awaited_once()
+    assert res2.reply_text == "जी, मैंने कार्ट में दूध जोड़ दिया है।"
+
+
+def test_mock_chat_completion_distinguishes_cart_add_address_and_delivery():
+    """Verify mock LLM accurately separates address queries, order status, order placement, and cart additions."""
+    sys_msg = {
+        "role": "system",
+        "content": (
+            "You are Vaak...\n\nSESSION CONTEXT:\n"
+            "Recently presented/discussed products: Amul Calci+ Milk\n"
+            "Recent product IDs discussed: amul_calci_1"
+        ),
+    }
+
+    # 1. 'address batao' must call list_saved_addresses, NOT update_cart
+    res_addr = sarvam_client._generate_mock_chat_completion([
+        sys_msg,
+        {"role": "user", "content": "mera address batao"},
+    ])
+    tc_addr = res_addr["choices"][0]["message"]["tool_calls"][0]
+    assert tc_addr["function"]["name"] == "list_saved_addresses"
+
+    # 2. 'kahaan hai delivery' must call list_order_history, NOT update_cart
+    res_track = sarvam_client._generate_mock_chat_completion([
+        sys_msg,
+        {"role": "user", "content": "kahaan hai meri delivery"},
+    ])
+    tc_track = res_track["choices"][0]["message"]["tool_calls"][0]
+    assert tc_track["function"]["name"] == "list_order_history"
+
+    # 3. 'order kardo' must call create_order, NOT update_cart
+    res_order = sarvam_client._generate_mock_chat_completion([
+        sys_msg,
+        {"role": "user", "content": "order kardo"},
+    ])
+    tc_order = res_order["choices"][0]["message"]["tool_calls"][0]
+    assert tc_order["function"]["name"] == "create_order"
+
+    # 4. Devanagari 'हाँ डाल दो' must call update_cart for amul_calci_1
+    res_hindi_add = sarvam_client._generate_mock_chat_completion([
+        sys_msg,
+        {"role": "user", "content": "हाँ डाल दो"},
+    ])
+    tc_hindi_add = res_hindi_add["choices"][0]["message"]["tool_calls"][0]
+    assert tc_hindi_add["function"]["name"] == "update_cart"
+    assert json.loads(tc_hindi_add["function"]["arguments"])["product_id"] == "amul_calci_1"
+
+    # 5. Devanagari 'कार्ट में डाल दो' must call update_cart for amul_calci_1
+    res_hindi_cart = sarvam_client._generate_mock_chat_completion([
+        sys_msg,
+        {"role": "user", "content": "कार्ट में डाल दो"},
+    ])
+    tc_hindi_cart = res_hindi_cart["choices"][0]["message"]["tool_calls"][0]
+    assert tc_hindi_cart["function"]["name"] == "update_cart"
+    assert json.loads(tc_hindi_cart["function"]["arguments"])["product_id"] == "amul_calci_1"
+
+
+@pytest.mark.asyncio
+async def test_clean_reply_text_strips_markdown_formatting():
+    """Verify raw LLM reply containing markdown asterisks has them stripped for clean React Native display."""
+    from uuid import uuid4
+
+    mock_reply = {
+        "id": "cmpl_markdown",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "Ji, I found **Amul Calci+ Milk** (1L) for ₹54. Shall I add it?",
+                },
+            }
+        ],
+    }
+
+    with patch.object(sarvam_client, "chat_completion", return_value=mock_reply):
+        res = await voice_orchestrator.process_user_intent(
+            user_message="Do you have milk?",
+            session_id=uuid4(),
+            language="en-IN",
+            generate_audio=False,
+        )
+
+    assert "**" not in res.reply_text
+    assert "**" not in res.spoken_text
+    assert "Amul Calci+ Milk" in res.reply_text
+
+

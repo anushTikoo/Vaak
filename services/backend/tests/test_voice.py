@@ -53,6 +53,30 @@ async def test_transcribe_forwards_audio_and_returns_provider_result(client, mon
 
 
 @pytest.mark.asyncio
+async def test_transcribe_forwards_language_query_param(client, monkeypatch):
+    audio_bytes = b"test audio bytes"
+    transcribe = AsyncMock(
+        return_value={
+            "transcript": "பால் வேண்டும்",
+            "detected_language": "ta-IN",
+            "confidence": 0.95,
+        }
+    )
+    monkeypatch.setattr(sarvam_client, "transcribe_audio", transcribe)
+
+    response = await client.post(
+        "/api/v1/voice/transcribe?language=ta-IN",
+        files={"audio": ("utterance.wav", audio_bytes, "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transcript"] == "பால் வேண்டும்"
+    assert data["detected_language"] == "ta-IN"
+    transcribe.assert_awaited_once_with(audio_bytes, language="ta-IN")
+
+
+@pytest.mark.asyncio
 async def test_transcribe_uses_safe_defaults_for_optional_provider_fields(client, monkeypatch):
     transcribe = AsyncMock(return_value={"transcript": "Hello"})
     monkeypatch.setattr(sarvam_client, "transcribe_audio", transcribe)
@@ -256,6 +280,18 @@ async def test_simulate_voice_utterance(client):
     assert response.status_code == 200
     data = response.json()
     assert data["transcript"] == "Add milk and eggs"
+    assert data["detected_language"] == "en-IN"
+    assert data["confidence"] == 1.0
+    UUID(data["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_simulate_voice_utterance_detects_indic_language(client):
+    response = await client.post("/api/v1/voice/simulate?query=दो+लीटर+दूध+चाहिए")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transcript"] == "दो लीटर दूध चाहिए"
+    assert data["detected_language"] == "hi-IN"
     assert data["confidence"] == 1.0
     UUID(data["session_id"])
 

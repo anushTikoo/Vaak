@@ -44,7 +44,7 @@ export default function VoiceHomeScreen() {
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'offline'>('checking');
   const [transcript, setTranscript] = useState<string>('');
   const [assistantReply, setAssistantReply] = useState<string>(
-    'Namaste! What groceries would you like to order today? You can speak in English or Hindi.'
+    'Namaste! What groceries would you like to order today? You can speak in Hindi, English, or any of 11 Indian languages.'
   );
   const [suggestedProducts, setSuggestedProducts] = useState<ProductCardData[]>([]);
   const [cart, setCart] = useState<CartData>({ items: [], currency: 'INR', subtotal: 0, total_items: 0 });
@@ -72,6 +72,7 @@ export default function VoiceHomeScreen() {
   const activeWebAudioRef = useRef<HTMLAudioElement | null>(null);
   const activeSessionIdRef = useRef<string | undefined>(undefined);
   const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const activeLanguageRef = useRef<string>('auto');
   const requestIdRef = useRef<number>(0);
   const isRecordingRef = useRef<boolean>(false);
 
@@ -146,12 +147,34 @@ export default function VoiceHomeScreen() {
     };
   }, [recordedUri]);
 
-  // Helper to detect Hindi text from script or keywords
-  const isHindiText = useCallback((text: string, langHint?: string) => {
-    if (langHint && (langHint.startsWith('hi') || langHint === 'hi-IN')) return true;
-    if (/[\u0900-\u097F]/.test(text)) return true;
-    return /\b(doodh|dudh|chahiye|kardo|daal do|namaste|aate|paani|sabzi|anda|ande|chawal|cheeni|shakkar|haan|theek|batao|kya hai|dekho)\b/i.test(text);
+  // Helper to detect language from text and Indic scripts across 11 Indian languages
+  const detectLanguageFromText = useCallback((text: string, langHint?: string): string => {
+    if (langHint && langHint !== 'auto' && langHint !== 'unknown') return langHint;
+    if (/[\u0900-\u097F]/.test(text)) return 'hi-IN';
+    if (/[\u0980-\u09FF]/.test(text)) return 'bn-IN';
+    if (/[\u0A00-\u0A7F]/.test(text)) return 'pa-IN';
+    if (/[\u0A80-\u0AFF]/.test(text)) return 'gu-IN';
+    if (/[\u0B00-\u0B7F]/.test(text)) return 'od-IN';
+    if (/[\u0B80-\u0BFF]/.test(text)) return 'ta-IN';
+    if (/[\u0C00-\u0C7F]/.test(text)) return 'te-IN';
+    if (/[\u0C80-\u0CFF]/.test(text)) return 'kn-IN';
+    if (/[\u0D00-\u0D7F]/.test(text)) return 'ml-IN';
+    if (
+      /\b(doodh|dudh|chahiye|kardo|daal do|namaste|aate|paani|sabzi|anda|ande|chawal|cheeni|shakkar|haan|theek|batao|kya hai|dekho)\b/i.test(
+        text
+      )
+    ) {
+      return 'hi-IN';
+    }
+    return 'en-IN';
   }, []);
+
+  const isHindiText = useCallback(
+    (text: string, langHint?: string) => {
+      return detectLanguageFromText(text, langHint) === 'hi-IN';
+    },
+    [detectLanguageFromText]
+  );
 
   // Speak assistant text using Sarvam AI bulbul:v4-flash Indian TTS in the matching language
   const speakAssistant = useCallback(
@@ -177,11 +200,9 @@ export default function VoiceHomeScreen() {
         if (isRecordingRef.current || currentReqId !== requestIdRef.current) return;
 
         const targetLang =
-          language !== 'auto'
+          language && language !== 'auto' && language !== 'unknown'
             ? language
-            : isHindiText(text)
-            ? 'hi-IN'
-            : 'en-IN';
+            : detectLanguageFromText(text, activeLanguageRef.current);
 
         // 1. If audio_base64 is already provided in response, play directly to save latency
         if (audioBase64) {
@@ -278,7 +299,7 @@ export default function VoiceHomeScreen() {
         console.warn('Speech synthesis error:', err);
       }
     },
-    [isVoiceFeedbackEnabled, isHindiText, stopAllAudio]
+    [isVoiceFeedbackEnabled, detectLanguageFromText, stopAllAudio]
   );
 
   // Check backend health and fetch initial cart
@@ -365,7 +386,12 @@ export default function VoiceHomeScreen() {
 
         try {
           // Transcribe user speech via backend
-          const result = await VaakApi.uploadAudio(uri, activeSessionIdRef.current, abortController.signal);
+          const result = await VaakApi.uploadAudio(
+            uri,
+            activeSessionIdRef.current,
+            abortController.signal,
+            activeLanguageRef.current
+          );
           if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
 
           setTranscript(result.transcript);
@@ -374,140 +400,79 @@ export default function VoiceHomeScreen() {
           }
 
           const detectedLang = result.detected_language || 'auto';
-          const isHindi = isHindiText(result.transcript, detectedLang);
-          const langCode = isHindi ? 'hi-IN' : 'en-IN';
+          if (detectedLang !== 'auto') {
+            activeLanguageRef.current = detectedLang;
+          }
 
           if (!result.transcript || result.transcript.trim() === '') {
+            const isHindi = isHindiText('', detectedLang);
             const noAudioMsg = isHindi
               ? 'मुझे आपकी आवाज़ साफ़ सुनाई नहीं दी। कृपया माइक दबाकर अपना ऑर्डर बोलें।'
               : "I couldn't hear any speech clearly. Please tap the mic and speak your order.";
             setAssistantReply(noAudioMsg);
-            speakAssistant(noAudioMsg, langCode, null, currentRequestId);
+            speakAssistant(noAudioMsg, detectedLang, null, currentRequestId);
             return;
           }
 
-          const lowerText = result.transcript.toLowerCase().trim();
+          // ALL user speech flows directly to the 105B Voice Orchestrator via VaakApi.sendChatMessage
+          const chatRes = await VaakApi.sendChatMessage(
+            result.transcript,
+            activeSessionIdRef.current,
+            detectedLang,
+            abortController.signal,
+            isVoiceFeedbackEnabled
+          );
+          if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
 
-          // 1. Check if user is confirming addition of suggested products via voice
-          const isAffirmative =
-            /^(yes|yeah|sure|okay|ok|yep|add|add them|add to cart|haan|ha|theek|kardo|le lo|daal do)/i.test(lowerText) ||
-            lowerText.includes('add them') ||
-            lowerText.includes('add to cart') ||
-            lowerText.includes('add both') ||
-            lowerText.includes('daal do') ||
-            lowerText.includes('kardo');
-
-          // 2. Check if user wants to place / checkout order via voice
-          const isOrderIntent =
-            /place order|checkout|order now|confirm order|order kardo|buy now|khareed lo|manga lo/i.test(lowerText);
-
-          // 3. Check if user wants to view cart via voice
-          const isCartQuery =
-            /what('s| is) in my cart|show cart|view cart|check cart|cart dekho|cart batao|kya hai cart me/i.test(lowerText);
-
-          if (isAffirmative && suggestedProducts.length > 0) {
-            // Automatically add all suggested products to cart via voice
-            for (const prod of suggestedProducts) {
-              if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
-              await VaakApi.addCartItem({
-                product_id: prod.product_id,
-                name: prod.name,
-                quantity: 1,
-                unit_price: prod.price,
-                pack_size: prod.pack_size,
-                image_url: prod.image_url,
-              });
-            }
-            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
-            const updatedCart = await VaakApi.getCart();
-            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
-            setCart(updatedCart);
-
-            const itemsAdded = suggestedProducts.map((p) => p.name).join(isHindi ? ' और ' : ' and ');
-            const replyMsg = isHindi
-              ? `मैंने ${itemsAdded} आपके कार्ट में जोड़ दिए हैं। कार्ट का कुल मूल्य ₹${updatedCart.subtotal.toFixed(0)} है। ऑर्डर पूरा करने के लिए "ऑर्डर प्लेस करो" कहें।`
-              : `Added ${itemsAdded} to your cart. Cart total is ₹${updatedCart.subtotal.toFixed(0)}. Say "place order" when you're ready to checkout.`;
-            setAssistantReply(replyMsg);
-            setSuggestedProducts([]);
-            speakAssistant(replyMsg, langCode, null, currentRequestId);
-          } else if (isOrderIntent) {
-            if (cart.total_items === 0) {
-              const replyMsg = isHindi
-                ? 'आपका कार्ट अभी खाली है। आज आप क्या किराना मंगाना चाहेंगे?'
-                : 'Your cart is currently empty. What groceries would you like to order today?';
-              setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode, null, currentRequestId);
-            } else {
-              setShowOrderSummary(true);
-              const replyMsg = isHindi
-                ? `आपका ऑर्डर सारांश तैयार है। ${cart.total_items} सामान का कुल मूल्य ₹${cart.subtotal.toFixed(0)} है। कृपया स्क्रीन देखें और "कन्फर्म ऑर्डर" दबाएँ।`
-                : `Your order summary is ready with ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(0)}. Please review your screen and tap Confirm Order to place it on Zepto.`;
-              setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode, null, currentRequestId);
-            }
-          } else if (isCartQuery) {
-            if (cart.total_items === 0) {
-              const replyMsg = isHindi
-                ? 'आपका कार्ट खाली है। आज आप क्या मंगाना चाहेंगे?'
-                : 'Your cart is empty. What would you like to order today?';
-              setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode, null, currentRequestId);
-            } else {
-              const itemNames = cart.items.map((i) => `${i.quantity} ${i.name}`).join(isHindi ? ', ' : ', ');
-              const replyMsg = isHindi
-                ? `आपके कार्ट में ${cart.total_items} सामान हैं: ${itemNames}, कुल ₹${cart.subtotal.toFixed(0)}। ऑर्डर करने के लिए "ऑर्डर प्लेस करो" कहें।`
-                : `You have ${cart.total_items} items in your cart: ${itemNames}, totaling ₹${cart.subtotal.toFixed(0)}. Say "place order" to review and checkout.`;
-              setAssistantReply(replyMsg);
-              speakAssistant(replyMsg, langCode, null, currentRequestId);
-            }
-          } else {
-            // General grocery product search intent in user's spoken language
-            const chatRes = await VaakApi.sendChatMessage(
-              result.transcript,
-              activeSessionIdRef.current,
-              langCode,
-              abortController.signal,
-              isVoiceFeedbackEnabled
-            );
-            if (abortController.signal.aborted || currentRequestId !== requestIdRef.current) return;
-
-            if (chatRes.session_id) {
-              activeSessionIdRef.current = chatRes.session_id;
-            }
-            setAssistantReply(chatRes.reply_text);
-            setSuggestedProducts(chatRes.suggested_products);
-
-            // Record Zepto MCP live tool logs for frontend UI inspection
-            const logs: ToolExecutionLog[] =
-              chatRes.tool_logs && chatRes.tool_logs.length > 0
-                ? chatRes.tool_logs
-                : (chatRes.tools_invoked || []).map((t) => ({
-                    tool_name: t,
-                    status: 'success' as const,
-                    summary: `Invoked Zepto MCP tool '${t}'`,
-                  }));
-            setRecentToolLogs(logs);
-
-            const newTurnLog: ConversationTurnLog = {
-              id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              userQuery: result.transcript,
-              toolsInvoked: chatRes.tools_invoked || [],
-              toolLogs: logs,
-              assistantReply: chatRes.reply_text,
-            };
-            setConversationTurnLogs((prev) => [newTurnLog, ...prev.slice(0, 19)]);
-
-            if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
-              setShowOrderSummary(true);
-            }
-            speakAssistant(
-              chatRes.spoken_text || chatRes.reply_text,
-              chatRes.detected_language || langCode,
-              chatRes.audio_base64,
-              currentRequestId
-            );
+          if (chatRes.session_id) {
+            activeSessionIdRef.current = chatRes.session_id;
           }
+          if (chatRes.detected_language && chatRes.detected_language !== 'auto') {
+            activeLanguageRef.current = chatRes.detected_language;
+          }
+          setAssistantReply(chatRes.reply_text);
+          setSuggestedProducts(chatRes.suggested_products);
+
+          // Refresh live cart so any tool updates from the 105B agent reflect in the mobile UI
+          try {
+            const updatedCart = await VaakApi.getCart();
+            if (!abortController.signal.aborted && currentRequestId === requestIdRef.current) {
+              setCart(updatedCart);
+            }
+          } catch (cartErr) {
+            console.warn('Failed to refresh cart after message:', cartErr);
+          }
+
+          // Record Zepto MCP live tool logs for frontend UI inspection
+          const logs: ToolExecutionLog[] =
+            chatRes.tool_logs && chatRes.tool_logs.length > 0
+              ? chatRes.tool_logs
+              : (chatRes.tools_invoked || []).map((t) => ({
+                  tool_name: t,
+                  status: 'success' as const,
+                  summary: `Invoked Zepto MCP tool '${t}'`,
+                }));
+          setRecentToolLogs(logs);
+
+          const newTurnLog: ConversationTurnLog = {
+            id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            userQuery: result.transcript,
+            toolsInvoked: chatRes.tools_invoked || [],
+            toolLogs: logs,
+            assistantReply: chatRes.reply_text,
+          };
+          setConversationTurnLogs((prev) => [newTurnLog, ...prev.slice(0, 19)]);
+
+          if (chatRes.order_guardrail_active || chatRes.action_type === 'order_confirmation_requested') {
+            setShowOrderSummary(true);
+          }
+          speakAssistant(
+            chatRes.spoken_text || chatRes.reply_text,
+            chatRes.detected_language || detectedLang,
+            chatRes.audio_base64,
+            currentRequestId
+          );
         } catch (err: any) {
           if (err?.name === 'AbortError' || abortController.signal.aborted || currentRequestId !== requestIdRef.current) {
             return;
@@ -671,8 +636,21 @@ export default function VoiceHomeScreen() {
       if (chatRes.session_id) {
         activeSessionIdRef.current = chatRes.session_id;
       }
+      if (chatRes.detected_language && chatRes.detected_language !== 'auto') {
+        activeLanguageRef.current = chatRes.detected_language;
+      }
       setAssistantReply(chatRes.reply_text);
       setSuggestedProducts(chatRes.suggested_products);
+
+      // Refresh live cart state
+      try {
+        const updatedCart = await VaakApi.getCart();
+        if (!abortController.signal.aborted && currentRequestId === requestIdRef.current) {
+          setCart(updatedCart);
+        }
+      } catch (cartErr) {
+        console.warn('Failed to refresh cart after simulate:', cartErr);
+      }
 
       // Record Zepto MCP live tool logs for simulated query
       const logs: ToolExecutionLog[] =
@@ -733,7 +711,7 @@ export default function VoiceHomeScreen() {
       const confirmedMsg = 'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
       setAssistantReply(confirmedMsg);
       const reqId = ++requestIdRef.current;
-      speakAssistant(confirmedMsg, 'en-IN', null, reqId);
+      speakAssistant(confirmedMsg, activeLanguageRef.current || 'auto', null, reqId);
 
       Alert.alert('⚡ Order Confirmed!', 'Your Zepto groceries are being packed and will be delivered in 10 minutes.');
     } catch (err) {
@@ -1017,7 +995,7 @@ export default function VoiceHomeScreen() {
           <Text style={styles.micStatusSubtitle}>
             {isRecording
               ? 'Tap button again to complete speech'
-              : 'Speak in English, Hindi, or your language'}
+              : 'Speak in Hindi, English, Marathi, Tamil, Bengali, Telugu, Gujarati, Kannada, Malayalam, Punjabi, or Odia'}
           </Text>
 
           {/* Audio Playback verification button */}
@@ -1061,10 +1039,10 @@ export default function VoiceHomeScreen() {
 
         {/* Natural Spoken Interaction Guide */}
         <View style={styles.voiceGuideCard}>
-          <Text style={styles.voiceGuideTitle}>🎙️ Everything via Voice</Text>
-          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Find:</Text> "I need two litres of milk and six eggs"</Text>
-          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Add:</Text> "Yes, add them to my cart"</Text>
-          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Review:</Text> "What is in my cart?"</Text>
+          <Text style={styles.voiceGuideTitle}>🎙️ Everything via Voice (11 Indian Languages)</Text>
+          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Find:</Text> "I need two litres of milk" / "Amul calci milk chahiye"</Text>
+          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Add:</Text> "Add it to my cart" / "Haan cart me daal do"</Text>
+          <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Review:</Text> "What is in my cart?" / "Cart dekho"</Text>
           <Text style={styles.voiceGuideItem}>• <Text style={styles.voiceGuideBold}>Order:</Text> "Place order" to inspect & confirm</Text>
         </View>
 
@@ -1072,7 +1050,7 @@ export default function VoiceHomeScreen() {
         {suggestedProducts.length > 0 && (
           <View style={styles.productsSection}>
             <Text style={styles.sectionTitle}>Matching Zepto Products (Visual Review)</Text>
-            <Text style={styles.sectionSubtitle}>Say "Yes, add them" to add to cart</Text>
+            <Text style={styles.sectionSubtitle}>Say "Add it to cart" to choose an item</Text>
             {suggestedProducts.map((product) => (
               <View key={product.product_id} style={styles.productCard}>
                 <View style={styles.productInfo}>
@@ -1081,7 +1059,7 @@ export default function VoiceHomeScreen() {
                   <Text style={styles.priceText}>₹{product.price.toFixed(2)}</Text>
                 </View>
                 <View style={styles.voiceAddHint}>
-                  <Text style={styles.voiceAddHintText}>Say "Yes"</Text>
+                  <Text style={styles.voiceAddHintText}>Say "Add"</Text>
                 </View>
               </View>
             ))}
@@ -1152,7 +1130,7 @@ export default function VoiceHomeScreen() {
                 const msg = `Order summary ready with ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(0)}. Tap Confirm to place.`;
                 setAssistantReply(msg);
                 const reqId = ++requestIdRef.current;
-                speakAssistant(msg, 'en-IN', null, reqId);
+                speakAssistant(msg, activeLanguageRef.current || 'auto', null, reqId);
               }}
             >
               <Text style={styles.checkoutVoiceButtonText}>Review & Place →</Text>

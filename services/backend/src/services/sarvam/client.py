@@ -25,6 +25,12 @@ LANGUAGE_SPEAKER_MAP = {
     "ta": ("ta-IN", "gokul_ta_narration"),
     "te-IN": ("te-IN", "kavitha_te_conversation"),
     "te": ("te-IN", "kavitha_te_conversation"),
+    "ml-IN": ("ml-IN", "arya_ml_conversational"),
+    "ml": ("ml-IN", "arya_ml_conversational"),
+    "od-IN": ("od-IN", "subhasree_od_conversational"),
+    "od": ("od-IN", "subhasree_od_conversational"),
+    "or-IN": ("od-IN", "subhasree_od_conversational"),
+    "or": ("od-IN", "subhasree_od_conversational"),
 }
 
 
@@ -102,7 +108,12 @@ class SarvamClient:
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             files = {"file": (f"recording{ext}", audio_bytes, mime_type)}
             headers = {"api-subscription-key": self.api_key}
-            data = {"language_code": "unknown" if language == "auto" else language, "model": "saaras:v4"}
+            lang_param = "unknown" if language == "auto" else self.normalize_language_code(language)
+            data = {
+                "language_code": lang_param,
+                "model": "saaras:v4",
+                "mode": "transcribe",
+            }
             resp = await http_client.post(
                 "https://api.sarvam.ai/speech-to-text",
                 files=files,
@@ -111,15 +122,26 @@ class SarvamClient:
             )
             resp.raise_for_status()
             res_json = resp.json()
+            res_transcript = res_json.get("transcript", "")
+            res_lang = res_json.get("language_code")
+            # If language_code is missing, 'unknown', or if the transcript has Indic characters that contradict en-IN
+            if (
+                not res_lang
+                or res_lang in ("unknown", "auto")
+                or (res_lang == "en-IN" and self.detect_language(res_transcript) != "en-IN")
+            ):
+                res_lang = self.detect_language(res_transcript)
+            res_lang = self.normalize_language_code(res_lang)
+
             return {
-                "transcript": res_json.get("transcript", ""),
-                "detected_language": res_json.get("language_code", "en-IN"),
+                "transcript": res_transcript,
+                "detected_language": res_lang,
                 "confidence": res_json.get("language_probability", 0.98),
                 "is_stub": False,
             }
 
     @staticmethod
-    def sanitize_tts_text(text: str, max_chars: int = 140) -> str:
+    def sanitize_tts_text(text: str, max_chars: int = 350) -> str:
         """Clean markdown, punctuation, and enforce character budget for TTS cost & latency optimization."""
         if not text:
             return ""
@@ -144,7 +166,7 @@ class SarvamClient:
         if len(cleaned) <= max_chars:
             return cleaned
 
-        # Truncate cleanly within character budget (~140 chars)
+        # Truncate cleanly within character budget (~350 chars)
         truncated = cleaned[:max_chars]
         last_punct = max(
             truncated.rfind("."),
@@ -379,6 +401,19 @@ class SarvamClient:
         role = last_msg.get("role", "user")
         content = str(last_msg.get("content", "")).lower()
 
+        # Check if conversation context is in Hindi
+        is_hindi_convo = any(
+            re.search(r"[\u0900-\u097F]", str(m.get("content", "")))
+            or re.search(
+                r"\b(doodh|dudh|chahiye|kardo|daal do|namaste|"
+                r"aate|paani|sabzi|anda|ande|chawal|cheeni|shakkar|haan|theek)\b",
+                str(m.get("content", "")),
+                re.IGNORECASE,
+            )
+            for m in messages
+            if m.get("role") in ("user", "assistant")
+        )
+
         # If previous message was a tool execution result (turn 2)
         if role == "tool":
             tool_name = str(last_msg.get("name", ""))
@@ -390,22 +425,48 @@ class SarvamClient:
             )
             if tool_name in order_confirm_tools:
                 turn2_reply = (
-                    "Ji, I have prepared your order summary on the screen for your review. "
-                    "For your safety, please check the bill and tap Confirm on your phone when you are ready."
+                    "जी, आपका ऑर्डर सारांश स्क्रीन पर तैयार है। कृपया विवरण देख लें और फ़ोन पर कन्फर्म दबा दें।"
+                    if is_hindi_convo
+                    else (
+                        "Ji, I have prepared your order summary on the screen for your review. "
+                        "For your safety, please check the bill and tap Confirm on your phone when you are ready."
+                    )
                 )
             elif tool_name in ("view_cart", "get_cart"):
                 turn2_reply = (
-                    "Ji, here are the items currently in your cart. "
-                    "You can review them on screen whenever you are ready."
+                    "जी, आपके कार्ट में मौजूद सामान स्क्रीन पर दिख रहा है।"
+                    if is_hindi_convo
+                    else (
+                        "Ji, here are the items currently in your cart. "
+                        "You can review them on screen whenever you are ready."
+                    )
                 )
             elif tool_name in ("update_cart", "add_to_cart", "remove_from_cart"):
                 turn2_reply = (
-                    "Ji, I have updated your cart as requested. Would you like to add anything else?"
+                    "जी, मैंने आपके कार्ट में सामान जोड़ दिया है। क्या आपको कुछ और चाहिए, जी?"
+                    if is_hindi_convo
+                    else "Ji, I have updated your cart as requested. Would you like to add anything else?"
+                )
+            elif tool_name in ("list_saved_addresses", "get_location_serviceability"):
+                turn2_reply = (
+                    "जी, मैंने आपके सेव किए हुए पते चेक कर लिए हैं।"
+                    if is_hindi_convo
+                    else "Ji, I have retrieved your saved delivery addresses."
+                )
+            elif tool_name in ("list_order_history", "get_order_detail"):
+                turn2_reply = (
+                    "जी, आपका ऑर्डर Zepto से 10 मिनट में पहुँचने वाला है।"
+                    if is_hindi_convo
+                    else "Ji, your order is on the way and will arrive within 10 minutes."
                 )
             else:
                 turn2_reply = (
-                    "I have found matching fresh items for you. "
-                    "Would you like me to add them to your cart?"
+                    "जी, मुझे आपके लिए ताज़ा सामान मिल गए हैं। क्या मैं इन्हें कार्ट में जोड़ दूँ?"
+                    if is_hindi_convo
+                    else (
+                        "I have found matching fresh items for you. "
+                        "Would you like me to add them to your cart?"
+                    )
                 )
             return {
                 "id": "mock_105b_completion",
@@ -425,7 +486,12 @@ class SarvamClient:
             }
 
         # Order placement intent -> Safety guardrail preview
-        if any(w in content for w in ("order", "checkout", "place order", "buy", "khareed")):
+        order_keywords = (
+            "place order", "checkout", "order now", "confirm order", "order kardo", "order kar do",
+            "buy now", "khareed lo", "manga lo", "ऑर्डर कर दो", "ऑर्डर करो", "खरीद लो"
+        )
+        is_order_intent = any(w in content for w in order_keywords)
+        if is_order_intent:
             return {
                 "id": "mock_105b_completion",
                 "object": "chat.completion",
@@ -452,8 +518,137 @@ class SarvamClient:
                 ],
             }
 
+        # Address & serviceability intent
+        address_keywords = (
+            "address", "saved address", "delivery address", "pata", "mera pata",
+            "कहाँ deliver", "पता", "डिलीवरी पता",
+        )
+        is_address_intent = any(w in content for w in address_keywords)
+        if is_address_intent:
+            return {
+                "id": "mock_105b_completion",
+                "object": "chat.completion",
+                "model": "sarvam-105b-conversations",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "mock_call_address",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_saved_addresses",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+
+        # Order status / tracking intent
+        track_keywords = ("track", "kahan hai", "kahaan hai", "order status", "delivery status", "कहाँ है")
+        is_track_intent = any(w in content for w in track_keywords)
+        if is_track_intent:
+            return {
+                "id": "mock_105b_completion",
+                "object": "chat.completion",
+                "model": "sarvam-105b-conversations",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "mock_call_track",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "list_order_history",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+
         # Cart query intent
-        if any(w in content for w in ("cart", "basket", "tokri", "jhola", "items in my cart")):
+        cart_query_signals = (
+            "what is in my cart", "show cart", "view cart", "check cart", "cart dekho", "cart batao",
+            "what's in my cart", "cart", "basket", "tokri", "jhola", "items in my cart",
+            "कार्ट देखो", "कार्ट बताओ", "कार्ट में क्या है",
+        )
+        is_cart_view_intent = any(w in content for w in cart_query_signals)
+
+        # Add to cart intent (follow-up or explicit single item addition)
+        # Use regex word boundaries for Romanized words to prevent false substring matches (e.g. 'address' -> 'add')
+        has_roman_add = bool(
+            re.search(
+                r"\b(add it|add to cart|add them|add this|add both|"
+                r"daal do|cart me daal|haan daal do|kardo|kar do|le lo|add|haan|yes)\b",
+                content,
+                re.IGNORECASE,
+            )
+        )
+        has_devanagari_add = bool(
+            re.search(
+                r"(डाल दो|कार्ट में डाल|हाँ डाल दो|ऐड कर दो|जोड़ दो|ले लो|डाल दीजिए|कार्ट में जोड़ो)",
+                content,
+            )
+        )
+        is_add_intent = (
+            (has_roman_add or has_devanagari_add)
+            and not is_order_intent
+            and not is_address_intent
+            and not is_track_intent
+            and not is_cart_view_intent
+        )
+        if is_add_intent:
+            target_pid = "prod_1"
+            for m in messages:
+                if m.get("role") == "system":
+                    sys_text = m.get("content", "")
+                    match = re.search(r"Recent product IDs discussed:\s*([a-zA-Z0-9_-]+)", sys_text)
+                    if match:
+                        target_pid = match.group(1).strip()
+                        break
+
+            return {
+                "id": "mock_105b_completion",
+                "object": "chat.completion",
+                "model": "sarvam-105b-conversations",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "mock_call_add_cart",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "update_cart",
+                                        "arguments": json.dumps({"product_id": target_pid, "quantity": 1}),
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+
+        if is_cart_view_intent:
             return {
                 "id": "mock_105b_completion",
                 "object": "chat.completion",
@@ -492,12 +687,21 @@ class SarvamClient:
         greeting_words = (
             "hello", "namaste", "namaskar", "pranam", "kaise ho", "how are you",
             "good morning", "good evening", "good afternoon", "thank you", "thanks",
-            "dhanyawaad", "shukriya", "who are you", "aap kaun ho"
+            "dhanyawaad", "shukriya", "who are you", "aap kaun ho",
+            "नमस्ते", "प्रणाम", "कैसे हो", "धन्यवाद", "शुक्रिया"
         )
         is_greeting = any(w in content for w in greeting_words)
 
         # Smart routing: pure greetings with NO grocery or cart intent -> respond politely without tools
         if is_greeting and not has_grocery_intent:
+            greeting_reply = (
+                "नमस्ते जी! मैं वाक् हूँ, आपका ग्रोसरी साथी। मैं आपकी क्या मदद कर सकता हूँ? कृपया बताइए क्या चाहिए।"
+                if is_hindi_convo
+                else (
+                    "Namaste! I am Vaak, your caring grocery shopping companion. "
+                    "How may I help you today? Please tell me what groceries you need."
+                )
+            )
             return {
                 "id": "mock_105b_completion",
                 "object": "chat.completion",
@@ -508,10 +712,7 @@ class SarvamClient:
                         "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
-                            "content": (
-                                "Namaste! I am Vaak, your caring grocery shopping companion. "
-                                "How may I help you today? Please tell me what groceries you need."
-                            ),
+                            "content": greeting_reply,
                             "tool_calls": None,
                         },
                     }

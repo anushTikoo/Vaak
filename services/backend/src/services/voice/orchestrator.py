@@ -53,7 +53,7 @@ CRITICAL INSTRUCTIONS & OPERATING RULES:
 4. SPOKEN RESPONSE FORMATTING & DUAL-CHANNEL RULES (OPTIMIZED FOR TTS EFFICIENCY):
 - DUAL-CHANNEL ARCHITECTURE: Rich product cards, images, prices, quantities, and cart updates
   are presented visually on screen. Never recite lists of products, prices, or technical specifications aloud.
-- ULTRA-CONCISE SPOKEN TEXT: spoken_text must be ultra-concise (<= 15-20 words / <= 120 chars) for speech,
+- ULTRA-CONCISE SPOKEN TEXT: spoken_text must be ultra-concise (<= 1-2 natural sentences / <= 350 chars) for speech,
   confirming actions or gently guiding the next step while rich product data is passed visually in the response.
 - Your response will be translated and read aloud via Sarvam Indian Voice TTS. Short speech minimizes token
   overhead, audio synthesis latency, and user waiting time.
@@ -67,6 +67,13 @@ CRITICAL INSTRUCTIONS & OPERATING RULES:
 - NEVER call or confirm live orders with confirmOrder=true.
 - If the elder user asks to place or confirm the order, reassure them with warmth: explain that their order
   summary is ready on the screen, and for their peace of mind, they can review and tap Confirm on their phone.
+
+6. PRECISE PRODUCT SELECTION WHEN ADDING TO CART (NEVER BULK-ADD UNLESS REQUESTED):
+- When a user asks for a product and then says 'add it' or 'haan daal do', identify the specific product
+  discussed or the top matching item, and call update_cart ONLY for that single item.
+  Never add all search results to the cart.
+- Select only the specific single item discussed in previous turns unless the user explicitly requested
+  multiple different products or explicitly said "add all".
 """
 
 # Maximum tool calls permitted per conversational turn to strictly avoid bombarding Zepto MCP
@@ -135,7 +142,9 @@ class SessionDialogueState:
     last_turn_user: str | None = None
     last_turn_assistant: str | None = None
     last_referenced_product_ids: list[str] = field(default_factory=list)
+    last_referenced_product_names: list[str] = field(default_factory=list)
     turns: list[dict[str, str]] = field(default_factory=list)
+    session_language: str = "en-IN"
 
 
 class VoiceOrchestrator:
@@ -162,6 +171,7 @@ class VoiceOrchestrator:
         user_text: str,
         assistant_text: str,
         product_ids: list[str] | None = None,
+        product_names: list[str] | None = None,
     ) -> None:
         """Record a conversation turn and update rolling dialogue state."""
         sid_str = str(session_id)
@@ -196,12 +206,18 @@ class VoiceOrchestrator:
         state.last_turn_user = user_text
         state.last_turn_assistant = assistant_text
 
-        # Track referenced product IDs
+        # Track referenced product IDs and names
         if product_ids:
             for pid in product_ids:
                 if pid and pid not in state.last_referenced_product_ids:
                     state.last_referenced_product_ids.append(str(pid))
             state.last_referenced_product_ids = state.last_referenced_product_ids[-10:]
+
+        if product_names:
+            for pname in product_names:
+                if pname and pname not in state.last_referenced_product_names:
+                    state.last_referenced_product_names.append(str(pname))
+            state.last_referenced_product_names = state.last_referenced_product_names[-10:]
 
         # Maintain recent turns list for history API inspection
         state.turns.append({"role": "user", "content": user_text})
@@ -234,22 +250,56 @@ class VoiceOrchestrator:
                 user_message, session_uuid, language, generate_audio=generate_audio
             )
 
-        # 2. Language normalization and detection
-        target_lang = sarvam_client.normalize_language_code(language)
+        # 2. Language normalization and detection with session continuity
+        state = self.get_session_state(sid_str)
+        detected_from_msg = sarvam_client.detect_language(user_message)
+
+        # Check if user message is a short follow-up intent that should retain active session language
+        is_short_followup = bool(
+            re.search(
+                r"^(yes|yeah|sure|okay|ok|yep|add|add it|add them|add both|"
+                r"add to cart|cart me daal do|daal do|kardo|le lo|haan|ha|theek|done|"
+                r"1|2|one|two|first|second|pehla|doosra)\b",
+                user_message.strip(),
+                re.IGNORECASE,
+            )
+            or len(user_message.strip().split()) <= 4
+        )
+
         if language in ("auto", "unknown", None, ""):
-            target_lang = sarvam_client.detect_language(user_message)
+            if detected_from_msg != "en-IN":
+                target_lang = detected_from_msg
+            elif state.session_language != "en-IN" and is_short_followup:
+                target_lang = state.session_language
+            else:
+                target_lang = detected_from_msg
+        else:
+            normalized = sarvam_client.normalize_language_code(language)
+            # If user message clearly has Indic characters or keywords, respect the message's Indic language over en-IN
+            if normalized == "en-IN" and detected_from_msg != "en-IN":
+                target_lang = detected_from_msg
+            elif normalized == "en-IN" and state.session_language != "en-IN" and is_short_followup:
+                target_lang = state.session_language
+            else:
+                target_lang = normalized
+
+        # Update session language
+        state.session_language = target_lang
 
         # 3. Equip 105B Reasoning Agent with Zepto MCP capabilities and dialogue state
         tools = zepto_client.get_chat_tools()
-        state = self.get_session_state(sid_str)
 
-        # Build context from dialogue state: 1-sentence rolling summary + recent product IDs
+        # Build context from dialogue state: 1-sentence rolling summary + recent product IDs & names
         system_content = VAAK_105B_SYSTEM_PROMPT
         context_notes: list[str] = []
         if state.rolling_summary:
             context_notes.append(f"Past session summary: {state.rolling_summary}")
+        if state.last_referenced_product_names:
+            recent_names = ", ".join(state.last_referenced_product_names[:5])
+            context_notes.append(f"Recently presented/discussed products: {recent_names}")
         if state.last_referenced_product_ids:
-            context_notes.append(f"Recent product IDs discussed: {', '.join(state.last_referenced_product_ids[:5])}")
+            recent_ids = ", ".join(state.last_referenced_product_ids[:5])
+            context_notes.append(f"Recent product IDs discussed: {recent_ids}")
 
         if context_notes:
             system_content += "\n\nSESSION CONTEXT:\n" + "\n".join(context_notes)
@@ -398,18 +448,27 @@ class VoiceOrchestrator:
 
         # 6. Translation: Translate back into user's language if target is Indic and reply is in English
         final_text = final_content.strip() or "Namaste! I have processed your request, Ji."
-        if target_lang != "en-IN" and final_text and sarvam_client.detect_language(final_text) != target_lang:
+        final_detected_lang = sarvam_client.detect_language(final_text)
+        if target_lang != "en-IN" and final_detected_lang != target_lang:
             try:
                 final_text = await sarvam_client.translate_text(
                     text=final_text,
                     target_language_code=target_lang,
                     source_language_code="auto",
                 )
+                final_detected_lang = target_lang
             except Exception as e:
                 logger.warning(f"Translation step failed: {e}. Retaining original text.")
+        elif target_lang == "en-IN" and final_detected_lang != "en-IN":
+            # If target_lang was deemed en-IN but model actually replied in Indic, align target_lang to the actual reply
+            target_lang = final_detected_lang
+            state.session_language = target_lang
 
-        # 7. Prepare ultra-concise spoken_text for speech synthesis (<= 140 chars)
-        spoken_text = sarvam_client.sanitize_tts_text(final_text, max_chars=140)
+        # Clean markdown formatting so React Native UI text never displays raw asterisks
+        clean_reply_text = re.sub(r"[#*_`~]+", "", final_text).strip()
+
+        # 7. Prepare spoken_text for speech synthesis (<= 350 chars)
+        spoken_text = sarvam_client.sanitize_tts_text(clean_reply_text, max_chars=350)
 
         # Generate spoken audio via Sarvam TTS (skipped completely when generate_audio is False)
         audio_b64: str | None = None
@@ -430,12 +489,19 @@ class VoiceOrchestrator:
                 deduped_products.append(p)
 
         referenced_pids = [p.product_id for p in deduped_products]
+        referenced_names = [p.name for p in deduped_products]
         # Record latest conversational turn into in-memory session dialogue state
-        self.append_session_turn(session_uuid, user_message, final_text, product_ids=referenced_pids)
+        self.append_session_turn(
+            session_uuid,
+            user_message,
+            clean_reply_text,
+            product_ids=referenced_pids,
+            product_names=referenced_names,
+        )
 
         return ChatMessageResponse(
             session_id=session_uuid,
-            reply_text=final_text,
+            reply_text=clean_reply_text,
             spoken_text=spoken_text,
             suggested_products=deduped_products,
             action_type=action_type,
@@ -493,7 +559,7 @@ class VoiceOrchestrator:
                 "Would you like me to add them to your cart?"
             )
 
-        spoken_text = sarvam_client.sanitize_tts_text(reply, max_chars=140)
+        spoken_text = sarvam_client.sanitize_tts_text(reply, max_chars=350)
         audio_b64: str | None = None
         if generate_audio:
             try:
@@ -502,7 +568,11 @@ class VoiceOrchestrator:
                 logger.warning(f"Sarvam TTS audio generation failed in mock intent: {e}")
 
         self.append_session_turn(
-            session_uuid, user_message, reply, product_ids=[p.product_id for p in cards]
+            session_uuid,
+            user_message,
+            reply,
+            product_ids=[p.product_id for p in cards],
+            product_names=[p.name for p in cards],
         )
 
         mock_logs = [
@@ -562,7 +632,7 @@ class VoiceOrchestrator:
                 "Would you like me to add them to your cart?"
             )
 
-        spoken_text = sarvam_client.sanitize_tts_text(reply, max_chars=140)
+        spoken_text = sarvam_client.sanitize_tts_text(reply, max_chars=350)
         audio_b64: str | None = None
         if generate_audio:
             try:
@@ -571,7 +641,11 @@ class VoiceOrchestrator:
                 logger.warning(f"Sarvam TTS audio generation failed in fallback: {e}")
 
         self.append_session_turn(
-            session_uuid, user_message, reply, product_ids=[p.product_id for p in cards]
+            session_uuid,
+            user_message,
+            reply,
+            product_ids=[p.product_id for p in cards],
+            product_names=[p.name for p in cards],
         )
 
         fallback_logs = [

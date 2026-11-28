@@ -538,3 +538,95 @@ async def test_generate_speech_base64_auto_detects_indic_scripts(monkeypatch):
     await client.generate_speech_base64("எனக்கு பால் வேண்டும்", language="auto")
     assert languages_called[-1] == "ta-IN"
 
+
+@pytest.mark.asyncio
+async def test_configured_stt_sends_mode_transcribe_and_language(monkeypatch):
+    """Verify STT requests send mode='transcribe' to ensure transcription rather than English translation."""
+    requests = []
+
+    async def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"transcript": "दो लीटर दूध", "language_code": "hi-IN", "language_probability": 0.98},
+        )
+
+    install_mock_http_client(monkeypatch, handler)
+    monkeypatch.setattr(sarvam_client, "api_key", "test-subscription-key")
+
+    result = await sarvam_client.transcribe_audio(b"sample-audio", language="hi-IN")
+
+    assert len(requests) == 1
+    body = await requests[0].aread()
+    assert b'name="mode"' in body
+    assert b"transcribe" in body
+    assert b'name="language_code"' in body
+    assert b"hi-IN" in body
+    assert result["transcript"] == "दो लीटर दूध"
+    assert result["detected_language"] == "hi-IN"
+
+
+@pytest.mark.asyncio
+async def test_configured_stt_infers_indic_language_when_provider_returns_unknown_or_en(monkeypatch):
+    """Verify STT falls back to detect_language if provider returns unknown, None, or en-IN for Indic transcript."""
+    async def handler(request):
+        return httpx.Response(
+            200,
+            json={"transcript": "मुझे दूध चाहिए", "language_code": "unknown", "language_probability": 0.9},
+        )
+
+    install_mock_http_client(monkeypatch, handler)
+    monkeypatch.setattr(sarvam_client, "api_key", "test-subscription-key")
+
+    res = await sarvam_client.transcribe_audio(b"sample-audio")
+    assert res["detected_language"] == "hi-IN"
+
+
+def test_sanitize_tts_text_preserves_natural_two_sentence_reply_under_350_chars():
+    """Verify natural 1-2 sentence replies (~200-300 chars) are preserved without being cut off at 140 chars."""
+    two_sentence_reply = (
+        "Ji, I have found Amul Taaza toned milk (1L) for ₹54 and Nandini pasteurized milk (500ml) for ₹27. "
+        "Which one would you like me to add to your cart, Ji?"
+    )
+    assert len(two_sentence_reply) > 140
+    assert len(two_sentence_reply) < 350
+    cleaned = SarvamClient.sanitize_tts_text(two_sentence_reply)
+    assert cleaned == two_sentence_reply
+    assert len(cleaned) > 140
+
+
+def test_sanitize_tts_text_truncates_cleanly_at_350_chars():
+    """Verify paragraphs exceeding 350 characters are truncated cleanly at sentence or word boundaries."""
+    long_text = (
+        "Namaste Ji! I have carefully searched your local Zepto store and found five varieties of fresh milk: "
+        "Amul Gold full cream milk 1 litre packet for 68 rupees, Nandini toned milk 500ml packet for 27 rupees, "
+        "Mother Dairy cow milk 1 litre for 56 rupees, and organic buffalo milk for 75 rupees. "
+        "All items are in stock right now and ready for immediate 10-minute delivery to your home address, Ji!"
+    )
+    assert len(long_text) > 350
+    cleaned = SarvamClient.sanitize_tts_text(long_text, max_chars=350)
+    assert len(cleaned) <= 350
+    assert cleaned.endswith(".") or cleaned.endswith("...")
+
+
+def test_multilingual_speaker_map_and_normalization_all_11_indian_languages():
+    """Verify all 11 Indian languages normalize cleanly and have speaker entries in LANGUAGE_SPEAKER_MAP."""
+    from src.services.sarvam.client import LANGUAGE_SPEAKER_MAP
+
+    expected_languages = [
+        "hi-IN", "en-IN", "bn-IN", "gu-IN", "kn-IN",
+        "mr-IN", "pa-IN", "ta-IN", "te-IN", "ml-IN", "od-IN",
+    ]
+    for lang in expected_languages:
+        assert lang in LANGUAGE_SPEAKER_MAP
+        normalized = SarvamClient.normalize_language_code(lang)
+        assert normalized == lang
+        # Short 2-letter prefix test
+        short_code = lang.split("-")[0]
+        assert SarvamClient.normalize_language_code(short_code) == lang
+
+    # Odia ISO 'or' variant
+    assert SarvamClient.normalize_language_code("or") == "od-IN"
+    assert SarvamClient.normalize_language_code("or-IN") == "od-IN"
+
+

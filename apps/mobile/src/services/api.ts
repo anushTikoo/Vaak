@@ -219,10 +219,14 @@ export class VaakApi {
   static async uploadAudio(
     audioUri: string,
     sessionId?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    language: string = 'auto'
   ): Promise<TranscribeResponse> {
-    const queryParam = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-    const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe${queryParam}`;
+    const params = new URLSearchParams();
+    if (sessionId) params.append('session_id', sessionId);
+    if (language && language !== 'auto') params.append('language', language);
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+    const uploadUrl = `${API_BASE_URL}/api/v1/voice/transcribe${queryString}`;
 
     if (signal?.aborted) {
       throw createAbortError();
