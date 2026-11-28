@@ -370,14 +370,17 @@ class SarvamClient:
         if tools:
             payload["tools"] = tools
 
-        async with httpx.AsyncClient(timeout=30.0) as client, client.stream(
-            "POST", "https://api.sarvam.ai/v1/chat/completions", headers=headers, json=payload
-        ) as response:
+        async with (
+            httpx.AsyncClient(timeout=30.0) as client,
+            client.stream(
+                "POST", "https://api.sarvam.ai/v1/chat/completions", headers=headers, json=payload
+            ) as response,
+        ):
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
-                data_str = line[len("data:"):].strip()
+                data_str = line[len("data:") :].strip()
                 if data_str == "[DONE]":
                     break
                 try:
@@ -463,10 +466,7 @@ class SarvamClient:
                 turn2_reply = (
                     "जी, मुझे आपके लिए ताज़ा सामान मिल गए हैं। क्या मैं इन्हें कार्ट में जोड़ दूँ?"
                     if is_hindi_convo
-                    else (
-                        "I have found matching fresh items for you. "
-                        "Would you like me to add them to your cart?"
-                    )
+                    else ("I have found matching fresh items for you. Would you like me to add them to your cart?")
                 )
             return {
                 "id": "mock_105b_completion",
@@ -487,8 +487,18 @@ class SarvamClient:
 
         # Order placement intent -> Safety guardrail preview
         order_keywords = (
-            "place order", "checkout", "order now", "confirm order", "order kardo", "order kar do",
-            "buy now", "khareed lo", "manga lo", "ऑर्डर कर दो", "ऑर्डर करो", "खरीद लो"
+            "place order",
+            "checkout",
+            "order now",
+            "confirm order",
+            "order kardo",
+            "order kar do",
+            "buy now",
+            "khareed lo",
+            "manga lo",
+            "ऑर्डर कर दो",
+            "ऑर्डर करो",
+            "खरीद लो",
         )
         is_order_intent = any(w in content for w in order_keywords)
         if is_order_intent:
@@ -520,8 +530,14 @@ class SarvamClient:
 
         # Address & serviceability intent
         address_keywords = (
-            "address", "saved address", "delivery address", "pata", "mera pata",
-            "कहाँ deliver", "पता", "डिलीवरी पता",
+            "address",
+            "saved address",
+            "delivery address",
+            "pata",
+            "mera pata",
+            "कहाँ deliver",
+            "पता",
+            "डिलीवरी पता",
         )
         is_address_intent = any(w in content for w in address_keywords)
         if is_address_intent:
@@ -583,9 +599,21 @@ class SarvamClient:
 
         # Cart query intent
         cart_query_signals = (
-            "what is in my cart", "show cart", "view cart", "check cart", "cart dekho", "cart batao",
-            "what's in my cart", "cart", "basket", "tokri", "jhola", "items in my cart",
-            "कार्ट देखो", "कार्ट बताओ", "कार्ट में क्या है",
+            "what is in my cart",
+            "show cart",
+            "view cart",
+            "check cart",
+            "cart dekho",
+            "cart batao",
+            "what's in my cart",
+            "cart",
+            "basket",
+            "tokri",
+            "jhola",
+            "items in my cart",
+            "कार्ट देखो",
+            "कार्ट बताओ",
+            "कार्ट में क्या है",
         )
         is_cart_view_intent = any(w in content for w in cart_query_signals)
 
@@ -674,21 +702,82 @@ class SarvamClient:
 
         # Check for grocery shopping signals
         grocery_signals = (
-            "doodh", "dudh", "milk", "bread", "egg", "anda", "ande", "butter", "makhan", "ghee",
-            "paneer", "apple", "seb", "banana", "kela", "tomato", "tamatar", "potato", "aloo",
-            "onion", "pyaz", "sabzi", "vegetable", "fruit", "aata", "atta", "flour", "chawal",
-            "rice", "dal", "daal", "cheeni", "sugar", "tea", "chai", "coffee", "oil", "tel",
-            "biscuit", "water", "paani", "grocery", "groceries", "chahiye", "bhej", "lao",
-            "packet", "litre", "liter", "kg", "pack"
+            "doodh",
+            "dudh",
+            "milk",
+            "bread",
+            "egg",
+            "anda",
+            "ande",
+            "butter",
+            "makhan",
+            "ghee",
+            "paneer",
+            "apple",
+            "seb",
+            "banana",
+            "kela",
+            "tomato",
+            "tamatar",
+            "potato",
+            "aloo",
+            "onion",
+            "pyaz",
+            "sabzi",
+            "vegetable",
+            "fruit",
+            "aata",
+            "atta",
+            "flour",
+            "chawal",
+            "rice",
+            "dal",
+            "daal",
+            "cheeni",
+            "sugar",
+            "tea",
+            "chai",
+            "coffee",
+            "oil",
+            "tel",
+            "biscuit",
+            "water",
+            "paani",
+            "grocery",
+            "groceries",
+            "chahiye",
+            "bhej",
+            "lao",
+            "packet",
+            "litre",
+            "liter",
+            "kg",
+            "pack",
         )
         has_grocery_intent = any(w in content for w in grocery_signals)
 
         # User greeting / conversational pleasantry -> SMART ROUTING: DO NOT CALL TOOLS
         greeting_words = (
-            "hello", "namaste", "namaskar", "pranam", "kaise ho", "how are you",
-            "good morning", "good evening", "good afternoon", "thank you", "thanks",
-            "dhanyawaad", "shukriya", "who are you", "aap kaun ho",
-            "नमस्ते", "प्रणाम", "कैसे हो", "धन्यवाद", "शुक्रिया"
+            "hello",
+            "namaste",
+            "namaskar",
+            "pranam",
+            "kaise ho",
+            "how are you",
+            "good morning",
+            "good evening",
+            "good afternoon",
+            "thank you",
+            "thanks",
+            "dhanyawaad",
+            "shukriya",
+            "who are you",
+            "aap kaun ho",
+            "नमस्ते",
+            "प्रणाम",
+            "कैसे हो",
+            "धन्यवाद",
+            "शुक्रिया",
         )
         is_greeting = any(w in content for w in greeting_words)
 
@@ -722,9 +811,31 @@ class SarvamClient:
         # Grocery search intent: strip polite filler words to extract core product keywords
         clean_query = content
         for stop_word in (
-            "namaste", "beta", "bhaiya", "hello", "hi", "kripya", "please", "can you",
-            "add", "find", "need", "chahiye", "bhej do", "daal do", "lao", "mujhe",
-            "humko", "give me", "i want", "two", "do", "ek", "one", "packet", "packets"
+            "namaste",
+            "beta",
+            "bhaiya",
+            "hello",
+            "hi",
+            "kripya",
+            "please",
+            "can you",
+            "add",
+            "find",
+            "need",
+            "chahiye",
+            "bhej do",
+            "daal do",
+            "lao",
+            "mujhe",
+            "humko",
+            "give me",
+            "i want",
+            "two",
+            "do",
+            "ek",
+            "one",
+            "packet",
+            "packets",
         ):
             clean_query = re.sub(rf"\b{stop_word}\b", "", clean_query, flags=re.IGNORECASE)
         query = clean_query.strip() or "groceries"

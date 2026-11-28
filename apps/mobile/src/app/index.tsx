@@ -700,23 +700,31 @@ export default function VoiceHomeScreen() {
     stopAllAudio();
     try {
       setIsPlacingOrder(true);
-      // Remove each item to complete order simulation on backend
-      for (const item of cart.items) {
-        await VaakApi.deleteCartItem(item.id);
-      }
-      const emptyCart = await VaakApi.getCart();
+      const result = await VaakApi.checkoutOrder(true);
+      const emptyCart = await VaakApi.getCart(true);
       setCart(emptyCart);
       setShowOrderSummary(false);
 
-      const confirmedMsg = 'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
+      const confirmedMsg =
+        result.message ||
+        'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
       setAssistantReply(confirmedMsg);
       const reqId = ++requestIdRef.current;
       speakAssistant(confirmedMsg, activeLanguageRef.current || 'auto', null, reqId);
 
-      Alert.alert('⚡ Order Confirmed!', 'Your Zepto groceries are being packed and will be delivered in 10 minutes.');
-    } catch (err) {
+      Alert.alert(
+        '⚡ Order Confirmed!',
+        `Order #${result.order_id || 'ZEP-CONFIRMED'}\n\n` +
+          `Delivering to: ${result.delivery_address || 'Home'}\n` +
+          `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
+          `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
+      );
+    } catch (err: any) {
       console.error('Failed to confirm order:', err);
-      Alert.alert('Error', 'Failed to place order. Please try again.');
+      Alert.alert(
+        'Order Placement Notice',
+        err.message || 'Failed to place order with Zepto. Please check items and try again.'
+      );
     } finally {
       setIsPlacingOrder(false);
     }
@@ -1078,7 +1086,7 @@ export default function VoiceHomeScreen() {
 
             <View style={styles.summaryAddress}>
               <Text style={styles.summaryAddressLabel}>Delivery to:</Text>
-              <Text style={styles.summaryAddressText}>📍 Indiranagar, Bengaluru • 10 Mins</Text>
+              <Text style={styles.summaryAddressText}>📍 Saved Address (Home) • 10 Mins Delivery</Text>
             </View>
 
             <View style={styles.summaryDivider} />

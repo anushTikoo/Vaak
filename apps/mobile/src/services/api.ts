@@ -54,6 +54,29 @@ export interface CartData {
   total_items: number;
 }
 
+export interface CheckoutItemData {
+  name: string;
+  price: number;
+  quantity: number;
+  product_id?: string | null;
+}
+
+export interface CheckoutResponse {
+  is_preview: boolean;
+  status: string;
+  order_id?: string | null;
+  subtotal: number;
+  delivery_fee: number;
+  packaging_fee: number;
+  to_pay: number;
+  total_items: number;
+  items: CheckoutItemData[];
+  delivery_address?: string | null;
+  eta_minutes?: number | null;
+  requires_confirmation: boolean;
+  message: string;
+}
+
 export interface ZeptoToolDefinition {
   name: string;
   category: string;
@@ -333,10 +356,31 @@ export class VaakApi {
     return await response.json();
   }
 
-  static async getCart(): Promise<CartData> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/cart`);
+  static async getCart(refresh: boolean = false): Promise<CartData> {
+    const url = refresh ? `${API_BASE_URL}/api/v1/cart?refresh=true` : `${API_BASE_URL}/api/v1/cart`;
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Failed to fetch cart: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  static async checkoutOrder(
+    confirm: boolean = false,
+    riderTip: number = 0
+  ): Promise<CheckoutResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/v1/cart/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        confirm_order: confirm,
+        payment_method: 'COD',
+        rider_tip: riderTip,
+      }),
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `Checkout failed: ${response.statusText}`);
     }
     return await response.json();
   }

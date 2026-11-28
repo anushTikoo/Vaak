@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
+from src.api.routes.cart import invalidate_cart_cache
 from src.core.config import settings
 from src.core.logging import logger
 from src.schemas.chat import ChatMessageResponse, ProductCard, ToolExecutionLog
@@ -118,6 +119,21 @@ def extract_product_cards(tool_name: str, tool_response: dict[str, Any]) -> list
                         is_available=bool(p.get("isAvailable", p.get("is_available", True))),
                     )
                 )
+    elif "items" in structured and isinstance(structured["items"], list):
+        for item in structured["items"]:
+            price_val = float(item.get("price") or item.get("unit_price") or 0.0)
+            if price_val >= 500 or "structuredContent" in tool_response:
+                price_val = round(price_val / 100.0, 2)
+            cards.append(
+                ProductCard(
+                    product_id=str(item.get("productVariantId") or item.get("id") or item.get("product_id") or ""),
+                    name=item.get("name", "Product"),
+                    price=price_val,
+                    pack_size=item.get("packSize") or item.get("pack_size"),
+                    image_url=item.get("imageUrl") or item.get("image_url"),
+                    is_available=bool(item.get("isAvailable", item.get("is_available", True))),
+                )
+            )
     elif "items" in tool_response and isinstance(tool_response["items"], list):
         for item in tool_response["items"]:
             cards.append(
@@ -383,15 +399,30 @@ class VoiceOrchestrator:
                 if tool_name == "update_cart" and action_type != "order_confirmation_requested":
                     action_type = "cart_updated"
 
+                if tool_name in ("update_cart", "create_order", "confirm_order_cod"):
+                    invalidate_cart_cache()
+
                 # Compute user-facing execution summary
                 summary = None
                 if tool_name in ("search_products", "search_multiple_products"):
                     q = tool_args.get("query", "")
                     summary = f"Searched catalog for '{q}' → {len(cards)} items found"
                 elif tool_name == "view_cart":
-                    total_items = resp_payload.get("total_items") or len(resp_payload.get("items", []))
+                    structured = resp_payload.get("structuredContent") or {}
+                    items_list = structured.get("items") or resp_payload.get("items") or []
+                    total_items = structured.get("totalItems") or resp_payload.get("total_items") or len(items_list)
                     subtotal = resp_payload.get("subtotal") or resp_payload.get("total_payable") or 0.0
-                    summary = f"Retrieved live cart ({total_items} items, ₹{subtotal})"
+                    if not subtotal and items_list:
+                        subtotal = sum(
+                            (
+                                float(it.get("price", 0)) / 100.0
+                                if float(it.get("price", 0)) >= 500 or "structuredContent" in resp_payload
+                                else float(it.get("unit_price") or it.get("price", 0))
+                            )
+                            * int(it.get("quantity", 1))
+                            for it in items_list
+                        )
+                    summary = f"Retrieved live cart ({total_items} items, ₹{round(subtotal, 2)})"
                 elif tool_name == "update_cart":
                     qty = tool_args.get("quantity", 1)
                     summary = f"Updated cart item (qty: {qty})"
@@ -418,12 +449,14 @@ class VoiceOrchestrator:
                     )
                 )
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", "call_1"),
-                    "name": tool_name,
-                    "content": json.dumps(resp_payload),
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", "call_1"),
+                        "name": tool_name,
+                        "content": json.dumps(resp_payload),
+                    }
+                )
 
             # Re-invoke 105B with tool execution results to generate elder-friendly spoken text
             try:
@@ -549,10 +582,7 @@ class VoiceOrchestrator:
         ]
 
         if is_hindi:
-            reply = (
-                f"मुझे Zepto पर '{user_message}' के लिए {len(cards)} सामान मिले हैं। "
-                "क्या मैं इन्हें आपके कार्ट में जोड़ दूँ?"
-            )
+            reply = f"मुझे Zepto पर '{user_message}' के लिए {len(cards)} सामान मिले हैं। क्या मैं इन्हें आपके कार्ट में जोड़ दूँ?"
         else:
             reply = (
                 f"I found {len(cards)} matching items on Zepto for '{user_message}'. "
@@ -622,10 +652,7 @@ class VoiceOrchestrator:
         ]
         is_hindi = language.startswith("hi")
         if is_hindi:
-            reply = (
-                f"नमस्ते जी, मुझे आपके लिए '{user_message}' के {len(cards)} सामान मिले हैं। "
-                "क्या मैं इन्हें आपके कार्ट में जोड़ दूँ?"
-            )
+            reply = f"नमस्ते जी, मुझे आपके लिए '{user_message}' के {len(cards)} सामान मिले हैं। क्या मैं इन्हें आपके कार्ट में जोड़ दूँ?"
         else:
             reply = (
                 f"I found {len(cards)} matching items on Zepto for '{user_message}'. "

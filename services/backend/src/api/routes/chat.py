@@ -30,4 +30,3 @@ async def clear_chat_history(session_id: UUID):
     """Clear conversational memory for a session."""
     voice_orchestrator.clear_session(session_id)
     return {"status": "cleared", "session_id": session_id}
-

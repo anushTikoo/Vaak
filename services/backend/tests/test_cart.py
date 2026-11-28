@@ -143,3 +143,95 @@ async def test_cart_rejects_malformed_item_id(client):
     response = await client.delete("/api/v1/cart/items/not-a-uuid")
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_cart_checkout_preview_and_confirmation(client):
+    # Add an item to the cart
+    await client.post(
+        "/api/v1/cart/items",
+        json={"product_id": "z_test_apple", "name": "Kashmir Apple", "unit_price": 120.0, "quantity": 1},
+    )
+
+    # Preview checkout
+    preview_res = await client.post("/api/v1/cart/checkout", json={"confirm_order": False})
+    assert preview_res.status_code == 200
+    preview_data = preview_res.json()
+    assert preview_data["is_preview"] is True
+    assert preview_data["requires_confirmation"] is True
+    assert preview_data["status"] == "preview"
+    assert preview_data["subtotal"] == 120.0
+    assert preview_data["total_items"] == 1
+
+    # Cart should still retain item after preview
+    cart_res = await client.get("/api/v1/cart")
+    assert len(cart_res.json()["items"]) == 1
+
+    # Explicitly confirm checkout
+    confirm_res = await client.post("/api/v1/cart/checkout", json={"confirm_order": True})
+    assert confirm_res.status_code == 200
+    confirm_data = confirm_res.json()
+    assert confirm_data["is_preview"] is False
+    assert confirm_data["requires_confirmation"] is False
+    assert confirm_data["status"] == "confirmed"
+    assert confirm_data["order_id"] is not None
+
+    # Cart should be cleared after confirmed order
+    empty_cart = await client.get("/api/v1/cart")
+    assert empty_cart.json()["items"] == []
+    assert empty_cart.json()["total_items"] == 0
+
+
+@pytest.mark.asyncio
+async def test_zepto_cart_parsing_and_caching(client, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from src.api.routes.cart import invalidate_cart_cache
+    from src.services.zepto.client import zepto_client
+
+    invalidate_cart_cache()
+
+    mock_view_cart = AsyncMock(
+        return_value={
+            "status": "success",
+            "response": {
+                "structuredContent": {
+                    "items": [
+                        {
+                            "id": "23037033-b0ab-4109-82b6-30f3a2a2cf84",
+                            "productVariantId": "23037033-b0ab-4109-82b6-30f3a2a2cf84",
+                            "name": "Amul Lactose Free Milk",
+                            "price": 2600,  # 2600 paise -> ₹26.00
+                            "quantity": 2,
+                            "packSize": "1 L",
+                        }
+                    ],
+                    "totalItems": 2,
+                    "isEmpty": False,
+                }
+            },
+        }
+    )
+
+    monkeypatch.setattr(zepto_client, "access_token", "mock_test_token")
+    monkeypatch.setattr(zepto_client, "call_tool", mock_view_cart)
+
+    # First fetch: should invoke MCP and populate cache
+    res1 = await client.get("/api/v1/cart")
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert len(data1["items"]) == 1
+    assert data1["items"][0]["unit_price"] == 26.0
+    assert data1["items"][0]["quantity"] == 2
+    assert data1["subtotal"] == 52.0
+    assert mock_view_cart.call_count == 1
+
+    # Second fetch: should hit TTL cache and NOT call MCP again
+    res2 = await client.get("/api/v1/cart")
+    assert res2.status_code == 200
+    assert mock_view_cart.call_count == 1
+
+    # Third fetch with ?refresh=true: should bypass cache and call MCP
+    res3 = await client.get("/api/v1/cart?refresh=true")
+    assert res3.status_code == 200
+    assert mock_view_cart.call_count == 2

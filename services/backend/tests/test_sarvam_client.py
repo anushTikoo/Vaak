@@ -314,9 +314,7 @@ async def test_unconfigured_chat_completion_stream(monkeypatch):
     client = SarvamClient()
     monkeypatch.setattr(client, "api_key", "mock_dev_key")
     tokens = []
-    async for token in client.chat_completion_stream(
-        messages=[{"role": "user", "content": "Hello"}]
-    ):
+    async for token in client.chat_completion_stream(messages=[{"role": "user", "content": "Hello"}]):
         tokens.append(token)
     assert len(tokens) > 0
     full_text = "".join(tokens)
@@ -331,7 +329,7 @@ async def test_configured_chat_completion_stream_yields_sse_chunks(monkeypatch):
     sse_data = (
         b'data: {"choices":[{"delta":{"content":"Namaste"}}]}\n\n'
         b'data: {"choices":[{"delta":{"content":" Ji"}}]}\n\n'
-        b'data: [DONE]\n\n'
+        b"data: [DONE]\n\n"
     )
 
     async def handler(request):
@@ -346,9 +344,7 @@ async def test_configured_chat_completion_stream_yields_sse_chunks(monkeypatch):
     monkeypatch.setattr(sarvam_client, "api_key", "test-subscription-key")
 
     tokens = []
-    async for token in sarvam_client.chat_completion_stream(
-        messages=[{"role": "user", "content": "Namaste"}]
-    ):
+    async for token in sarvam_client.chat_completion_stream(messages=[{"role": "user", "content": "Namaste"}]):
         tokens.append(token)
 
     assert tokens == ["Namaste", " Ji"]
@@ -482,8 +478,7 @@ async def test_audio_cache_language_isolation(monkeypatch):
 def test_sanitize_tts_text_indic_sentence_boundaries():
     """Verify sanitize_tts_text cleanly terminates at Indic punctuation boundaries (Devanagari danda ।)."""
     long_hindi = (
-        "नमस्ते जी, मैंने आपके लिए ताज़ा दूध और ब्रेड ढूंढ लिया है। "
-        "क्या मैं इन्हें आपके कार्ट में जोड़ दूँ? कार्ट का कुल मूल्य अड़तालीस रुपये है।"
+        "नमस्ते जी, मैंने आपके लिए ताज़ा दूध और ब्रेड ढूंढ लिया है। क्या मैं इन्हें आपके कार्ट में जोड़ दूँ? कार्ट का कुल मूल्य अड़तालीस रुपये है।"
     )
     # With a budget of 80 chars, the first complete Hindi sentence ends at ~58 chars with ।
     cleaned = SarvamClient.sanitize_tts_text(long_hindi, max_chars=80)
@@ -569,6 +564,7 @@ async def test_configured_stt_sends_mode_transcribe_and_language(monkeypatch):
 @pytest.mark.asyncio
 async def test_configured_stt_infers_indic_language_when_provider_returns_unknown_or_en(monkeypatch):
     """Verify STT falls back to detect_language if provider returns unknown, None, or en-IN for Indic transcript."""
+
     async def handler(request):
         return httpx.Response(
             200,
@@ -614,8 +610,17 @@ def test_multilingual_speaker_map_and_normalization_all_11_indian_languages():
     from src.services.sarvam.client import LANGUAGE_SPEAKER_MAP
 
     expected_languages = [
-        "hi-IN", "en-IN", "bn-IN", "gu-IN", "kn-IN",
-        "mr-IN", "pa-IN", "ta-IN", "te-IN", "ml-IN", "od-IN",
+        "hi-IN",
+        "en-IN",
+        "bn-IN",
+        "gu-IN",
+        "kn-IN",
+        "mr-IN",
+        "pa-IN",
+        "ta-IN",
+        "te-IN",
+        "ml-IN",
+        "od-IN",
     ]
     for lang in expected_languages:
         assert lang in LANGUAGE_SPEAKER_MAP
@@ -628,5 +633,3 @@ def test_multilingual_speaker_map_and_normalization_all_11_indian_languages():
     # Odia ISO 'or' variant
     assert SarvamClient.normalize_language_code("or") == "od-IN"
     assert SarvamClient.normalize_language_code("or-IN") == "od-IN"
-
-

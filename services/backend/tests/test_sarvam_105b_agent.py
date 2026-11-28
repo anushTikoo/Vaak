@@ -184,9 +184,10 @@ async def test_sarvam_105b_agent_enforces_rate_limiting_max_tool_calls():
         ],
     }
 
-    with patch.object(sarvam_client, "chat_completion", side_effect=[mock_chat_first, mock_chat_second]) as mock_chat, \
-         patch.object(zepto_client, "call_tool", new_callable=AsyncMock) as mock_call_tool:
-
+    with (
+        patch.object(sarvam_client, "chat_completion", side_effect=[mock_chat_first, mock_chat_second]) as mock_chat,
+        patch.object(zepto_client, "call_tool", new_callable=AsyncMock) as mock_call_tool,
+    ):
         mock_call_tool.return_value = {
             "status": "success",
             "response": {"items": []},
@@ -310,28 +311,34 @@ async def test_zepto_client_call_tool_guardrail_handles_string_false():
 def test_mock_chat_completion_turn2_produces_elder_friendly_responses():
     """Verify SarvamClient mock turn 2 responses are customized and respectful for each tool type."""
     # 1. Order preview
-    res_order = sarvam_client._generate_mock_chat_completion([
-        {"role": "user", "content": "place order"},
-        {"role": "tool", "name": "create_order", "content": "{}"},
-    ])
+    res_order = sarvam_client._generate_mock_chat_completion(
+        [
+            {"role": "user", "content": "place order"},
+            {"role": "tool", "name": "create_order", "content": "{}"},
+        ]
+    )
     order_text = res_order["choices"][0]["message"]["content"]
     assert "order summary" in order_text.lower()
     assert "ji" in order_text.lower()
 
     # 2. View cart
-    res_cart = sarvam_client._generate_mock_chat_completion([
-        {"role": "user", "content": "view cart"},
-        {"role": "tool", "name": "view_cart", "content": "{}"},
-    ])
+    res_cart = sarvam_client._generate_mock_chat_completion(
+        [
+            {"role": "user", "content": "view cart"},
+            {"role": "tool", "name": "view_cart", "content": "{}"},
+        ]
+    )
     cart_text = res_cart["choices"][0]["message"]["content"]
     assert "cart" in cart_text.lower()
     assert "ji" in cart_text.lower()
 
     # 3. Update cart
-    res_update = sarvam_client._generate_mock_chat_completion([
-        {"role": "user", "content": "add milk"},
-        {"role": "tool", "name": "update_cart", "content": "{}"},
-    ])
+    res_update = sarvam_client._generate_mock_chat_completion(
+        [
+            {"role": "user", "content": "add milk"},
+            {"role": "tool", "name": "update_cart", "content": "{}"},
+        ]
+    )
     update_text = res_update["choices"][0]["message"]["content"]
     assert "updated" in update_text.lower()
 
@@ -354,9 +361,10 @@ async def test_sarvam_105b_translation_pipeline_translates_to_indic_language():
         ],
     }
 
-    with patch.object(sarvam_client, "chat_completion", return_value=mock_chat_first), \
-         patch.object(sarvam_client, "translate_text", new_callable=AsyncMock) as mock_translate:
-
+    with (
+        patch.object(sarvam_client, "chat_completion", return_value=mock_chat_first),
+        patch.object(sarvam_client, "translate_text", new_callable=AsyncMock) as mock_translate,
+    ):
         mock_translate.return_value = "मैंने आपके लिए ताज़ा दूध ढूंढ लिया है। क्या आप इसे कार्ट में जोड़ना चाहेंगे?"
 
         res = await voice_orchestrator.process_user_intent(
@@ -407,6 +415,7 @@ def test_system_prompt_contains_all_core_instructions():
 async def test_session_memory_retains_recent_conversation_context():
     """Verify that VoiceOrchestrator stores and supplies prior conversation turns across turns."""
     from uuid import uuid4
+
     session_id = uuid4()
 
     mock_chat_turn1 = {
@@ -514,6 +523,7 @@ def test_extract_product_cards_handles_paise_and_rupees():
 async def test_chat_history_api_routes_get_and_delete(client):
     """Verify that chat history endpoint returns recorded turns and allows clearing."""
     from uuid import uuid4
+
     session_id = uuid4()
 
     voice_orchestrator.append_session_turn(session_id, "User test question", "Assistant test answer")
@@ -540,6 +550,7 @@ async def test_chat_history_api_routes_get_and_delete(client):
 async def test_mock_intent_records_session_history():
     """Verify that _process_mock_test_intent records session history turns."""
     from uuid import uuid4
+
     session_id = uuid4()
     voice_orchestrator.clear_session(session_id)
 
@@ -603,30 +614,36 @@ async def test_rolling_dialogue_state_tracking_across_multi_turn_session():
         mock_llm.side_effect = [
             # Turn 1 reply
             {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "I found fresh Nandini milk for you. Would you like me to add it?",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "I found fresh Nandini milk for you. Would you like me to add it?",
+                        }
                     }
-                }]
+                ]
             },
             # Turn 2 reply
             {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "I have also added brown bread to your cart.",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "I have also added brown bread to your cart.",
+                        }
                     }
-                }]
+                ]
             },
             # Turn 3 reply
             {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "Your total bill is ₹99 for milk and bread.",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Your total bill is ₹99 for milk and bread.",
+                        }
                     }
-                }]
+                ]
             },
         ]
 
@@ -809,12 +826,13 @@ async def test_single_item_cart_addition_on_followup_add_it_to_cart():
         ],
     }
 
-    with patch.object(
-        sarvam_client, "chat_completion", side_effect=[mock_chat_turn1, mock_chat_turn1_reply]
-    ), patch.object(
-        zepto_client,
-        "call_tool",
-        return_value={"structuredContent": {"products": mock_search_products}},
+    with (
+        patch.object(sarvam_client, "chat_completion", side_effect=[mock_chat_turn1, mock_chat_turn1_reply]),
+        patch.object(
+            zepto_client,
+            "call_tool",
+            return_value={"structuredContent": {"products": mock_search_products}},
+        ),
     ):
         res1 = await voice_orchestrator.process_user_intent(
             user_message="Amul calci milk chahiye",
@@ -873,10 +891,9 @@ async def test_single_item_cart_addition_on_followup_add_it_to_cart():
         tool_calls_executed.append((tool_name, arguments))
         return {"items": [{"product_id": "amul_calci_1", "name": "Amul Calci+ Milk", "quantity": 1}]}
 
-    with patch.object(
-        sarvam_client, "chat_completion", side_effect=[mock_chat_turn2, mock_chat_turn2_reply]
-    ), patch.object(
-        zepto_client, "call_tool", side_effect=mock_call_tool
+    with (
+        patch.object(sarvam_client, "chat_completion", side_effect=[mock_chat_turn2, mock_chat_turn2_reply]),
+        patch.object(zepto_client, "call_tool", side_effect=mock_call_tool),
     ):
         res2 = await voice_orchestrator.process_user_intent(
             user_message="haan daal do",
@@ -968,9 +985,12 @@ async def test_multilingual_language_retention_across_indic_languages():
             ],
         }
 
-        with patch.object(sarvam_client, "chat_completion", return_value=mock_reply), patch.object(
-            sarvam_client, "translate_text", return_value=f"Translated reply in {lang_code}"
-        ) as mock_translate:
+        with (
+            patch.object(sarvam_client, "chat_completion", return_value=mock_reply),
+            patch.object(
+                sarvam_client, "translate_text", return_value=f"Translated reply in {lang_code}"
+            ) as mock_translate,
+        ):
             res = await voice_orchestrator.process_user_intent(
                 user_message=user_msg,
                 session_id=uuid4(),
@@ -1030,9 +1050,10 @@ async def test_session_language_retention_on_short_english_followup():
         ],
     }
 
-    with patch.object(sarvam_client, "chat_completion", return_value=mock_reply_turn2), patch.object(
-        sarvam_client, "translate_text", return_value="जी, मैंने कार्ट में दूध जोड़ दिया है।"
-    ) as mock_translate:
+    with (
+        patch.object(sarvam_client, "chat_completion", return_value=mock_reply_turn2),
+        patch.object(sarvam_client, "translate_text", return_value="जी, मैंने कार्ट में दूध जोड़ दिया है।") as mock_translate,
+    ):
         res2 = await voice_orchestrator.process_user_intent(
             user_message="add it to cart",
             session_id=session_id,
@@ -1057,43 +1078,53 @@ def test_mock_chat_completion_distinguishes_cart_add_address_and_delivery():
     }
 
     # 1. 'address batao' must call list_saved_addresses, NOT update_cart
-    res_addr = sarvam_client._generate_mock_chat_completion([
-        sys_msg,
-        {"role": "user", "content": "mera address batao"},
-    ])
+    res_addr = sarvam_client._generate_mock_chat_completion(
+        [
+            sys_msg,
+            {"role": "user", "content": "mera address batao"},
+        ]
+    )
     tc_addr = res_addr["choices"][0]["message"]["tool_calls"][0]
     assert tc_addr["function"]["name"] == "list_saved_addresses"
 
     # 2. 'kahaan hai delivery' must call list_order_history, NOT update_cart
-    res_track = sarvam_client._generate_mock_chat_completion([
-        sys_msg,
-        {"role": "user", "content": "kahaan hai meri delivery"},
-    ])
+    res_track = sarvam_client._generate_mock_chat_completion(
+        [
+            sys_msg,
+            {"role": "user", "content": "kahaan hai meri delivery"},
+        ]
+    )
     tc_track = res_track["choices"][0]["message"]["tool_calls"][0]
     assert tc_track["function"]["name"] == "list_order_history"
 
     # 3. 'order kardo' must call create_order, NOT update_cart
-    res_order = sarvam_client._generate_mock_chat_completion([
-        sys_msg,
-        {"role": "user", "content": "order kardo"},
-    ])
+    res_order = sarvam_client._generate_mock_chat_completion(
+        [
+            sys_msg,
+            {"role": "user", "content": "order kardo"},
+        ]
+    )
     tc_order = res_order["choices"][0]["message"]["tool_calls"][0]
     assert tc_order["function"]["name"] == "create_order"
 
     # 4. Devanagari 'हाँ डाल दो' must call update_cart for amul_calci_1
-    res_hindi_add = sarvam_client._generate_mock_chat_completion([
-        sys_msg,
-        {"role": "user", "content": "हाँ डाल दो"},
-    ])
+    res_hindi_add = sarvam_client._generate_mock_chat_completion(
+        [
+            sys_msg,
+            {"role": "user", "content": "हाँ डाल दो"},
+        ]
+    )
     tc_hindi_add = res_hindi_add["choices"][0]["message"]["tool_calls"][0]
     assert tc_hindi_add["function"]["name"] == "update_cart"
     assert json.loads(tc_hindi_add["function"]["arguments"])["product_id"] == "amul_calci_1"
 
     # 5. Devanagari 'कार्ट में डाल दो' must call update_cart for amul_calci_1
-    res_hindi_cart = sarvam_client._generate_mock_chat_completion([
-        sys_msg,
-        {"role": "user", "content": "कार्ट में डाल दो"},
-    ])
+    res_hindi_cart = sarvam_client._generate_mock_chat_completion(
+        [
+            sys_msg,
+            {"role": "user", "content": "कार्ट में डाल दो"},
+        ]
+    )
     tc_hindi_cart = res_hindi_cart["choices"][0]["message"]["tool_calls"][0]
     assert tc_hindi_cart["function"]["name"] == "update_cart"
     assert json.loads(tc_hindi_cart["function"]["arguments"])["product_id"] == "amul_calci_1"
@@ -1129,5 +1160,3 @@ async def test_clean_reply_text_strips_markdown_formatting():
     assert "**" not in res.reply_text
     assert "**" not in res.spoken_text
     assert "Amul Calci+ Milk" in res.reply_text
-
-

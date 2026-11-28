@@ -560,16 +560,16 @@ class ZeptoMCPClient:
                     pvid = "23037033-b0ab-4109-82b6-30f3a2a2cf84"
 
                 spid = (
-                    args.get("store_product_id")
-                    or args.get("storeProductId")
-                    or "40d390a2-4c76-59b8-bd4d-8251dd165eca"
+                    args.get("store_product_id") or args.get("storeProductId") or "40d390a2-4c76-59b8-bd4d-8251dd165eca"
                 )
                 qty = 0 if name == "remove_from_cart" else int(args.get("quantity", 1))
-                cart_items = [{
-                    "productVariantId": str(pvid),
-                    "storeProductId": str(spid),
-                    "quantity": qty,
-                }]
+                cart_items = [
+                    {
+                        "productVariantId": str(pvid),
+                        "storeProductId": str(spid),
+                        "quantity": qty,
+                    }
+                ]
 
             device_id = args.get("deviceId") or self.device_id
             return "update_cart", {
@@ -590,9 +590,7 @@ class ZeptoMCPClient:
                 "confirmOrder": _is_truthy(args.get("confirmOrder", True)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
-                    args.get("userAddressId")
-                    or self.selected_address_id
-                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                    args.get("userAddressId") or self.selected_address_id or "542e3f92-a25d-4092-96fb-6ce406534a56"
                 ),
                 "useZeptoCash": bool(args.get("useZeptoCash", False)),
             }
@@ -602,9 +600,7 @@ class ZeptoMCPClient:
                 "confirmOrder": _is_truthy(args.get("confirmOrder", True)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
-                    args.get("userAddressId")
-                    or self.selected_address_id
-                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                    args.get("userAddressId") or self.selected_address_id or "542e3f92-a25d-4092-96fb-6ce406534a56"
                 ),
                 "useZeptoCash": bool(args.get("useZeptoCash", False)),
             }
@@ -614,9 +610,7 @@ class ZeptoMCPClient:
                 "confirmOrder": _is_truthy(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
-                    args.get("userAddressId")
-                    or self.selected_address_id
-                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                    args.get("userAddressId") or self.selected_address_id or "542e3f92-a25d-4092-96fb-6ce406534a56"
                 ),
                 "useZeptoCash": bool(args.get("useZeptoCash", False)),
             }
@@ -626,9 +620,7 @@ class ZeptoMCPClient:
                 "confirmOrder": _is_truthy(args.get("confirmOrder", False)),
                 "riderTip": args.get("riderTip", 0),
                 "userAddressId": (
-                    args.get("userAddressId")
-                    or self.selected_address_id
-                    or "542e3f92-a25d-4092-96fb-6ce406534a56"
+                    args.get("userAddressId") or self.selected_address_id or "542e3f92-a25d-4092-96fb-6ce406534a56"
                 ),
                 "useZeptoCash": bool(args.get("useZeptoCash", False)),
             }
@@ -695,15 +687,12 @@ class ZeptoMCPClient:
         args = dict(orig_args)
 
         # Temporary safety guardrail: prevent any automated/agent execution from confirming/placing a live order
-        is_order_confirmation_call = (
-            orig_name in (
-                "confirm_order_cod",
-                "confirm_online_payment_order",
-                "create_order_confirmed",
-                "confirm_order_upi",
-            )
-            or _is_truthy(orig_args.get("confirmOrder", False))
-        )
+        is_order_confirmation_call = orig_name in (
+            "confirm_order_cod",
+            "confirm_online_payment_order",
+            "create_order_confirmed",
+            "confirm_order_upi",
+        ) or _is_truthy(orig_args.get("confirmOrder", False))
         guardrail_applied = False
         if (self.order_confirmation_guardrail_enabled and enforce_guardrail) and is_order_confirmation_call:
             guardrail_applied = True
@@ -786,21 +775,23 @@ class ZeptoMCPClient:
                     # 4. Handle success response
                     if resp.status_code == 200 and "error" not in parsed_body:
                         result_data = parsed_body.get("result", parsed_body)
-                        return _tag_result({
-                            "tool_name": name,
-                            "target_tool_name": target_name,
-                            "input_arguments": args,
-                            "raw_rpc_request": upstream_payload,
-                            "status": "success",
-                            "status_code": 200,
-                            "source": "live_mcp",
-                            "is_authenticated": self.is_authenticated,
-                            "session_id": self.session_id,
-                            "active_store_id": self.selected_store_id,
-                            "endpoint": self.endpoint,
-                            "execution_time_ms": elapsed_ms,
-                            "response": result_data,
-                        })
+                        return _tag_result(
+                            {
+                                "tool_name": name,
+                                "target_tool_name": target_name,
+                                "input_arguments": args,
+                                "raw_rpc_request": upstream_payload,
+                                "status": "success",
+                                "status_code": 200,
+                                "source": "live_mcp",
+                                "is_authenticated": self.is_authenticated,
+                                "session_id": self.session_id,
+                                "active_store_id": self.selected_store_id,
+                                "endpoint": self.endpoint,
+                                "execution_time_ms": elapsed_ms,
+                                "response": result_data,
+                            }
+                        )
                     else:
                         err_payload = (
                             parsed_body
@@ -808,60 +799,66 @@ class ZeptoMCPClient:
                             else parsed_body.get("error", parsed_body)
                         )
                         if force_upstream or self.is_authenticated:
-                            return _tag_result({
-                                "tool_name": name,
-                                "target_tool_name": target_name,
-                                "input_arguments": args,
-                                "raw_rpc_request": upstream_payload,
-                                "status": "error",
-                                "status_code": resp.status_code,
-                                "source": "live_mcp",
-                                "is_authenticated": self.is_authenticated,
-                                "endpoint": self.endpoint,
-                                "execution_time_ms": elapsed_ms,
-                                "error": err_payload,
-                                "note": (
-                                    "Upstream Zepto MCP returned non-200. Check OAuth scopes or address selection."
-                                    if resp.status_code != 200
-                                    else None
-                                ),
-                            })
+                            return _tag_result(
+                                {
+                                    "tool_name": name,
+                                    "target_tool_name": target_name,
+                                    "input_arguments": args,
+                                    "raw_rpc_request": upstream_payload,
+                                    "status": "error",
+                                    "status_code": resp.status_code,
+                                    "source": "live_mcp",
+                                    "is_authenticated": self.is_authenticated,
+                                    "endpoint": self.endpoint,
+                                    "execution_time_ms": elapsed_ms,
+                                    "error": err_payload,
+                                    "note": (
+                                        "Upstream Zepto MCP returned non-200. Check OAuth scopes or address selection."
+                                        if resp.status_code != 200
+                                        else None
+                                    ),
+                                }
+                            )
             except Exception as e:
                 logger.warning(f"Live Zepto MCP call failed: {e}")
                 if force_upstream:
                     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return _tag_result({
-                        "tool_name": name,
-                        "input_arguments": args,
-                        "raw_rpc_request": payload,
-                        "status": "error",
-                        "status_code": 500,
-                        "source": "live_mcp",
-                        "is_authenticated": self.is_authenticated,
-                        "endpoint": self.endpoint,
-                        "execution_time_ms": elapsed_ms,
-                        "error": str(e),
-                    })
+                    return _tag_result(
+                        {
+                            "tool_name": name,
+                            "input_arguments": args,
+                            "raw_rpc_request": payload,
+                            "status": "error",
+                            "status_code": 500,
+                            "source": "live_mcp",
+                            "is_authenticated": self.is_authenticated,
+                            "endpoint": self.endpoint,
+                            "execution_time_ms": elapsed_ms,
+                            "error": str(e),
+                        }
+                    )
 
         # Sandbox / Development Mock Response (accurately mimics Zepto dark store schema)
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
         mock_result = self._generate_sandbox_response(name, args)
-        return _tag_result({
-            "tool_name": name,
-            "input_arguments": args,
-            "raw_rpc_request": payload,
-            "status": "success",
-            "status_code": 200,
-            "source": "sandbox_mock",
-            "is_authenticated": False,
-            "endpoint": self.endpoint,
-            "execution_time_ms": elapsed_ms,
-            "response": mock_result,
-            "note": (
-                "Running in realistic Zepto dark store sandbox mode. "
-                "Connect via OAuth to link your live Zepto account."
-            ),
-        })
+        return _tag_result(
+            {
+                "tool_name": name,
+                "input_arguments": args,
+                "raw_rpc_request": payload,
+                "status": "success",
+                "status_code": 200,
+                "source": "sandbox_mock",
+                "is_authenticated": False,
+                "endpoint": self.endpoint,
+                "execution_time_ms": elapsed_ms,
+                "response": mock_result,
+                "note": (
+                    "Running in realistic Zepto dark store sandbox mode. "
+                    "Connect via OAuth to link your live Zepto account."
+                ),
+            }
+        )
 
     def _generate_sandbox_response(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         """Generate realistic quick-commerce dark store responses for each tool."""
@@ -952,11 +949,7 @@ class ZeptoMCPClient:
             }
             query_words = [w for w in query.split() if len(w) > 2 and w not in stopwords]
 
-            filtered = [
-                item
-                for item in catalog
-                if any(word in item["name"].lower() for word in query_words)
-            ]
+            filtered = [item for item in catalog if any(word in item["name"].lower() for word in query_words)]
             items = (filtered if filtered else catalog)[:limit]
 
             return {

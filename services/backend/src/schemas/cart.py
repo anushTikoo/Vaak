@@ -44,3 +44,35 @@ class AddCartItemRequest(BaseModel):
 
 class UpdateCartItemRequest(BaseModel):
     quantity: int = Field(..., ge=0, description="New quantity (0 deletes item)")
+
+
+class CheckoutRequest(BaseModel):
+    confirm_order: bool = Field(
+        default=False,
+        description="Whether to execute live order placement (True) or safe preview (False)",
+    )
+    payment_method: str = Field(default="COD", description="Payment method: COD or UPI")
+    rider_tip: int = Field(default=0, ge=0, description="Rider tip in INR")
+
+
+class CheckoutItem(BaseModel):
+    name: str
+    price: float
+    quantity: int
+    product_id: str | None = None
+
+
+class CheckoutResponse(BaseModel):
+    is_preview: bool
+    status: str
+    order_id: str | None = None
+    subtotal: float = 0.0
+    delivery_fee: float = 0.0
+    packaging_fee: float = 0.0
+    to_pay: float = 0.0
+    total_items: int = 0
+    items: list[CheckoutItem] = Field(default_factory=list)
+    delivery_address: str | None = None
+    eta_minutes: int | None = None
+    requires_confirmation: bool = True
+    message: str = ""

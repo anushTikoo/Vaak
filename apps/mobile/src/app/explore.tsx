@@ -21,10 +21,10 @@ export default function CartScreen() {
   const [loading, setLoading] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  const fetchCart = useCallback(async () => {
+  const fetchCart = useCallback(async (refresh: boolean = false) => {
     try {
       setLoading(true);
-      const data = await VaakApi.getCart();
+      const data = await VaakApi.getCart(refresh);
       setCart(data);
     } catch (err) {
       console.error('Failed to load cart:', err);
@@ -34,22 +34,25 @@ export default function CartScreen() {
   }, []);
 
   useEffect(() => {
+    // Fetch cached cart on mount (does not spam Zepto MCP)
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchCart();
+    fetchCart(false);
   }, [fetchCart]);
 
-  const handleUpdateQuantity = async (itemId: string, newQty: number) => {
+  const handleUpdateQuantity = async (item: { id: string; product_id: string }, newQty: number) => {
     try {
-      const updated = await VaakApi.updateCartItem(itemId, newQty);
+      const targetId = item.product_id || item.id;
+      const updated = await VaakApi.updateCartItem(targetId, newQty);
       setCart(updated);
     } catch (err) {
       console.error('Failed to update quantity:', err);
     }
   };
 
-  const handleRemove = async (itemId: string) => {
+  const handleRemove = async (item: { id: string; product_id: string }) => {
     try {
-      const updated = await VaakApi.deleteCartItem(itemId);
+      const targetId = item.product_id || item.id;
+      const updated = await VaakApi.deleteCartItem(targetId);
       setCart(updated);
     } catch (err) {
       console.error('Failed to remove item:', err);
@@ -64,22 +67,35 @@ export default function CartScreen() {
 
     Alert.alert(
       'Explicit Order Confirmation',
-      `You are confirming an order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+      `You are placing a live order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
         2
-      )} via Zepto.\n\nNever silently place an order without your review.\n\nProceed with simulated order placement?`,
+      )} via Zepto Dark Store.\n\nPayment Method: Cash on Delivery (COD)\nDelivery ETA: ~10 minutes\n\nConfirm order placement?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Confirm & Place Order',
           onPress: async () => {
-            setIsSubmitting(true);
-            setTimeout(() => {
-              setIsSubmitting(false);
+            try {
+              setIsSubmitting(true);
+              const result = await VaakApi.checkoutOrder(true);
+              const emptyCart = await VaakApi.getCart(true);
+              setCart(emptyCart);
               Alert.alert(
-                'Order Received by Zepto (Simulated)',
-                `Order total ₹${cart.subtotal.toFixed(2)} recorded.\nEstimated delivery: 10 mins.`
+                '⚡ Order Placed on Zepto!',
+                `Order #${result.order_id || 'ZEP-CONFIRMED'}\n\n` +
+                  `Delivering to: ${result.delivery_address || 'Home'}\n` +
+                  `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
+                  `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
               );
-            }, 1200);
+            } catch (err: any) {
+              console.error('Failed to place order:', err);
+              Alert.alert(
+                'Order Placement Notice',
+                err.message || 'Could not place order with Zepto. Please check items and try again.'
+              );
+            } finally {
+              setIsSubmitting(false);
+            }
           },
         },
       ]
@@ -90,7 +106,7 @@ export default function CartScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Your Grocery Cart</Text>
-        <TouchableOpacity onPress={fetchCart} style={styles.refreshButton}>
+        <TouchableOpacity onPress={() => fetchCart(true)} style={styles.refreshButton}>
           <Text style={styles.refreshText}>↻ Refresh</Text>
         </TouchableOpacity>
       </View>
@@ -118,7 +134,7 @@ export default function CartScreen() {
                   {item.pack_size && <Text style={styles.itemPack}>{item.pack_size}</Text>}
                   <Text style={styles.itemPrice}>₹{item.unit_price.toFixed(2)} / unit</Text>
                 </View>
-                <TouchableOpacity onPress={() => handleRemove(item.id)} style={styles.deleteButton}>
+                <TouchableOpacity onPress={() => handleRemove(item)} style={styles.deleteButton}>
                   <Text style={styles.deleteText}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -127,14 +143,14 @@ export default function CartScreen() {
                 <View style={styles.quantityControls}>
                   <TouchableOpacity
                     style={styles.qtyButton}
-                    onPress={() => handleUpdateQuantity(item.id, item.quantity - 1)}
+                    onPress={() => handleUpdateQuantity(item, item.quantity - 1)}
                   >
                     <Text style={styles.qtyButtonText}>-</Text>
                   </TouchableOpacity>
                   <Text style={styles.qtyText}>{item.quantity}</Text>
                   <TouchableOpacity
                     style={styles.qtyButton}
-                    onPress={() => handleUpdateQuantity(item.id, item.quantity + 1)}
+                    onPress={() => handleUpdateQuantity(item, item.quantity + 1)}
                   >
                     <Text style={styles.qtyButtonText}>+</Text>
                   </TouchableOpacity>

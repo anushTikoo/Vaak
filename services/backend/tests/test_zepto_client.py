@@ -11,8 +11,7 @@ async def test_development_catalog_results_match_product_search_contract():
 
     assert products
     assert all(
-        {"product_id", "name", "price", "pack_size", "image_url", "is_available"}
-        <= product.keys()
+        {"product_id", "name", "price", "pack_size", "image_url", "is_available"} <= product.keys()
         for product in products
     )
     assert all(isinstance(product["product_id"], str) for product in products)
