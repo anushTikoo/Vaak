@@ -9,6 +9,7 @@ import {
   Animated,
   Alert,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -54,6 +55,7 @@ export default function VoiceHomeScreen() {
   const [isPlayingRecording, setIsPlayingRecording] = useState<boolean>(false);
   const [showOrderSummary, setShowOrderSummary] = useState<boolean>(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
 
   // Live Zepto MCP Activity State
   const [recentToolLogs, setRecentToolLogs] = useState<ToolExecutionLog[]>([]);
@@ -695,30 +697,66 @@ export default function VoiceHomeScreen() {
     }
   };
 
-  // Explicit order placement confirmation (never silently places order)
-  const handleConfirmOrder = async () => {
+  // Execution of real order placement after warning confirmation
+  const executeConfirmOrder = async (method: 'UPI' | 'COD') => {
     stopAllAudio();
     try {
       setIsPlacingOrder(true);
-      const result = await VaakApi.checkoutOrder(true);
+      const result = await VaakApi.checkoutOrder(true, method);
       const emptyCart = await VaakApi.getCart(true);
       setCart(emptyCart);
       setShowOrderSummary(false);
 
-      const confirmedMsg =
-        result.message ||
-        'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
-      setAssistantReply(confirmedMsg);
-      const reqId = ++requestIdRef.current;
-      speakAssistant(confirmedMsg, activeLanguageRef.current || 'auto', null, reqId);
+      if (method === 'UPI' && result.payment_link) {
+        const confirmedMsg =
+          'Zepto UPI order created! Opening payment gateway for you to complete payment in Google Pay or PhonePe.';
+        setAssistantReply(confirmedMsg);
+        const reqId = ++requestIdRef.current;
+        speakAssistant(confirmedMsg, activeLanguageRef.current || 'auto', null, reqId);
 
-      Alert.alert(
-        '⚡ Order Confirmed!',
-        `Order #${result.order_id || 'ZEP-CONFIRMED'}\n\n` +
-          `Delivering to: ${result.delivery_address || 'Home'}\n` +
-          `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
-          `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
-      );
+        Alert.alert(
+          '⚡ UPI Order Initiated!',
+          `Order Code: ${result.order_code || result.order_id || 'ZEP-UPI'}\n\n` +
+            `Amount: ₹${result.to_pay.toFixed(2)}\n\n` +
+            `Opening secure Juspay payment page to select Google Pay, PhonePe, Paytm, or UPI ID.\n\n` +
+            `Safe Note: Zero money is deducted until you authorize with your secret UPI PIN.`,
+          [
+            {
+              text: 'Open UPI Payment ↗',
+              onPress: async () => {
+                try {
+                  await Linking.openURL(result.payment_link!);
+                } catch (linkErr) {
+                  console.warn('Could not open payment link:', linkErr);
+                }
+              },
+            },
+            { text: 'Later', style: 'cancel' },
+          ]
+        );
+
+        // Attempt direct open on device
+        try {
+          await Linking.openURL(result.payment_link);
+        } catch {
+          // Alert above provides fallback
+        }
+      } else {
+        const confirmedMsg =
+          result.message ||
+          'Order placed successfully on Zepto! Delivery partner is assigned and will arrive in 10 minutes.';
+        setAssistantReply(confirmedMsg);
+        const reqId = ++requestIdRef.current;
+        speakAssistant(confirmedMsg, activeLanguageRef.current || 'auto', null, reqId);
+
+        Alert.alert(
+          '⚡ Order Confirmed!',
+          `Order #${result.order_code || result.order_id || 'ZEP-CONFIRMED'}\n\n` +
+            `Delivering to: ${result.delivery_address || 'Home'}\n` +
+            `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
+            `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
+        );
+      }
     } catch (err: any) {
       console.error('Failed to confirm order:', err);
       Alert.alert(
@@ -727,6 +765,52 @@ export default function VoiceHomeScreen() {
       );
     } finally {
       setIsPlacingOrder(false);
+    }
+  };
+
+  // Explicit order placement confirmation with mandatory warning popup
+  const handleConfirmOrder = () => {
+    if (cart.items.length === 0) {
+      Alert.alert('Cart is empty', 'Add some grocery items using voice or search first.');
+      return;
+    }
+
+    if (paymentMethod === 'UPI') {
+      Alert.alert(
+        '⚠️ WARNING: Initiating Real Order',
+        `You are about to initiate a REAL order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+          2
+        )} with Zepto.\n\n` +
+          `• Payment Mode: UPI (Google Pay, PhonePe, Paytm)\n` +
+          `• Safe Guarantee: Zero money is deducted until you enter your secret UPI PIN in your UPI app.\n` +
+          `• Redirects to secure UPI payment page.\n\n` +
+          `Proceed to UPI payment?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes, Proceed to UPI Payment →',
+            onPress: () => executeConfirmOrder('UPI'),
+          },
+        ]
+      );
+    } else {
+      Alert.alert(
+        '⚠️ WARNING: Placing Real Order Immediately',
+        `You are about to IMMEDIATELY place an active real order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+          2
+        )} with Zepto.\n\n` +
+          `• Payment Mode: Cash on Delivery (COD)\n` +
+          `• A delivery partner will be dispatched to your address immediately (~10 mins).\n\n` +
+          `Are you sure you want to place this order now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes, Place Real Order (COD)',
+            style: 'destructive',
+            onPress: () => executeConfirmOrder('COD'),
+          },
+        ]
+      );
     }
   };
 
@@ -1107,18 +1191,77 @@ export default function VoiceHomeScreen() {
               <Text style={styles.summaryTotalValue}>₹{cart.subtotal.toFixed(2)}</Text>
             </View>
 
+            {/* Payment Method Selector in Order Summary Modal */}
+            <View style={styles.modalPaymentCard}>
+              <Text style={styles.modalPaymentTitle}>Payment Method</Text>
+              <View style={styles.modalPaymentOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.modalPaymentOption,
+                    paymentMethod === 'UPI' && styles.modalPaymentSelected,
+                  ]}
+                  onPress={() => setPaymentMethod('UPI')}
+                >
+                  <Text style={styles.modalPaymentIcon}>⚡</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.modalPaymentLabel,
+                        paymentMethod === 'UPI' && styles.modalPaymentLabelSelected,
+                      ]}
+                    >
+                      UPI / Online (Juspay)
+                    </Text>
+                    <Text style={styles.modalPaymentSub}>Google Pay, PhonePe, Paytm, BHIM</Text>
+                  </View>
+                  {paymentMethod === 'UPI' && <Text style={styles.modalPaymentCheck}>✓</Text>}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.modalPaymentOption,
+                    paymentMethod === 'COD' && styles.modalPaymentSelected,
+                  ]}
+                  onPress={() => setPaymentMethod('COD')}
+                >
+                  <Text style={styles.modalPaymentIcon}>💵</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.modalPaymentLabel,
+                        paymentMethod === 'COD' && styles.modalPaymentLabelSelected,
+                      ]}
+                    >
+                      Cash on Delivery (COD)
+                    </Text>
+                    <Text style={styles.modalPaymentSub}>Pay cash to delivery partner</Text>
+                  </View>
+                  {paymentMethod === 'COD' && <Text style={styles.modalPaymentCheck}>✓</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <TouchableOpacity
-              style={styles.confirmButton}
+              style={[
+                styles.confirmButton,
+                paymentMethod === 'UPI' ? styles.confirmButtonUpi : styles.confirmButtonCod,
+              ]}
               onPress={handleConfirmOrder}
               disabled={isPlacingOrder}
             >
               {isPlacingOrder ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.confirmButtonText}>✅ Confirm & Place Order with Zepto</Text>
+                <Text style={styles.confirmButtonText}>
+                  {paymentMethod === 'UPI'
+                    ? '⚡ Confirm & Pay with UPI (Juspay)'
+                    : '💵 Confirm & Place Order (COD)'}
+                </Text>
               )}
             </TouchableOpacity>
-            <Text style={styles.confirmNotice}>Orders require explicit visual tap confirmation before placement.</Text>
+            <Text style={styles.confirmNotice}>
+              ⚠️ Orders require explicit warning confirmation before actual placement.
+            </Text>
           </View>
         )}
 
@@ -1725,16 +1868,75 @@ const styles = StyleSheet.create({
     color: '#10B981',
   },
   confirmButton: {
-    backgroundColor: '#10B981',
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
+  },
+  confirmButtonUpi: {
+    backgroundColor: '#6366F1',
+  },
+  confirmButtonCod: {
+    backgroundColor: '#10B981',
   },
   confirmButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  modalPaymentCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalPaymentTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94A3B8',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  modalPaymentOptions: {
+    gap: 8,
+  },
+  modalPaymentOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+  },
+  modalPaymentSelected: {
+    borderColor: '#6366F1',
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+  },
+  modalPaymentIcon: {
+    fontSize: 18,
+    marginRight: 10,
+  },
+  modalPaymentLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#E2E8F0',
+  },
+  modalPaymentLabelSelected: {
+    color: '#A5B4FC',
+  },
+  modalPaymentSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  modalPaymentCheck: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#6366F1',
+    marginLeft: 6,
   },
   confirmNotice: {
     fontSize: 11,

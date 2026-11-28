@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { VaakApi, CartData } from '@/services/api';
@@ -20,6 +21,9 @@ export default function CartScreen() {
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'COD'>('UPI');
+  const [activePaymentLink, setActivePaymentLink] = useState<string | null>(null);
+  const [activeOrderCode, setActiveOrderCode] = useState<string | null>(null);
 
   const fetchCart = useCallback(async (refresh: boolean = false) => {
     try {
@@ -59,47 +63,108 @@ export default function CartScreen() {
     }
   };
 
+  const executeOrder = async (method: 'UPI' | 'COD') => {
+    try {
+      setIsSubmitting(true);
+      const result = await VaakApi.checkoutOrder(true, method);
+      const emptyCart = await VaakApi.getCart(true);
+      setCart(emptyCart);
+
+      if (method === 'UPI' && result.payment_link) {
+        setActivePaymentLink(result.payment_link);
+        const displayCode = result.order_code || result.order_id || 'ZEP-UPI';
+        setActiveOrderCode(displayCode);
+
+        Alert.alert(
+          '⚡ UPI Order Initiated!',
+          `Order Code: ${displayCode}\n\n` +
+            `Total Payable: ₹${result.to_pay.toFixed(2)}\n\n` +
+            `We are redirecting you to Zepto's secure Juspay checkout page. You can pay via Google Pay, PhonePe, Paytm, or enter your UPI ID.\n\n` +
+            `Safe Note: Zero money is deducted until you authorize with your secret UPI PIN.`,
+          [
+            {
+              text: 'Open UPI Payment ↗',
+              onPress: async () => {
+                try {
+                  await Linking.openURL(result.payment_link!);
+                } catch (linkErr) {
+                  console.warn('Could not open payment link:', linkErr);
+                }
+              },
+            },
+            { text: 'Later', style: 'cancel' },
+          ]
+        );
+
+        // Also trigger direct redirect on device
+        try {
+          await Linking.openURL(result.payment_link);
+        } catch {
+          // Alert above provides fallback action button
+        }
+      } else {
+        Alert.alert(
+          '⚡ Order Placed on Zepto!',
+          `Order #${result.order_code || result.order_id || 'ZEP-CONFIRMED'}\n\n` +
+            `Delivering to: ${result.delivery_address || 'Home'}\n` +
+            `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
+            `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
+        );
+      }
+    } catch (err: any) {
+      console.error('Failed to place order:', err);
+      Alert.alert(
+        'Order Notice',
+        err.message || 'Could not place order with Zepto. Please check items and try again.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleExplicitConfirmation = () => {
     if (cart.items.length === 0) {
       Alert.alert('Cart is empty', 'Add some grocery items using voice or search first.');
       return;
     }
 
-    Alert.alert(
-      'Explicit Order Confirmation',
-      `You are placing a live order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
-        2
-      )} via Zepto Dark Store.\n\nPayment Method: Cash on Delivery (COD)\nDelivery ETA: ~10 minutes\n\nConfirm order placement?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm & Place Order',
-          onPress: async () => {
-            try {
-              setIsSubmitting(true);
-              const result = await VaakApi.checkoutOrder(true);
-              const emptyCart = await VaakApi.getCart(true);
-              setCart(emptyCart);
-              Alert.alert(
-                '⚡ Order Placed on Zepto!',
-                `Order #${result.order_id || 'ZEP-CONFIRMED'}\n\n` +
-                  `Delivering to: ${result.delivery_address || 'Home'}\n` +
-                  `Total to Pay: ₹${result.to_pay.toFixed(2)} (Cash on Delivery)\n` +
-                  `Estimated Arrival: ~${result.eta_minutes || 10} minutes.`
-              );
-            } catch (err: any) {
-              console.error('Failed to place order:', err);
-              Alert.alert(
-                'Order Placement Notice',
-                err.message || 'Could not place order with Zepto. Please check items and try again.'
-              );
-            } finally {
-              setIsSubmitting(false);
-            }
+    if (paymentMethod === 'UPI') {
+      Alert.alert(
+        '⚠️ WARNING: Initiating Real Order',
+        `You are about to initiate a REAL order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+          2
+        )} with Zepto Dark Store.\n\n` +
+          `• Payment Mode: UPI / Online Payment (Juspay Gateway)\n` +
+          `• Safe Guarantee: Zero money is deducted until you enter your secret UPI PIN in your UPI app (Google Pay, PhonePe, Paytm).\n` +
+          `• Redirects to secure UPI payment page.\n\n` +
+          `Do you want to proceed and open the UPI payment page?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes, Proceed to UPI Payment →',
+            onPress: () => executeOrder('UPI'),
           },
-        },
-      ]
-    );
+        ]
+      );
+    } else {
+      Alert.alert(
+        '⚠️ WARNING: Placing Real Order Immediately',
+        `You are about to IMMEDIATELY place an active real order for ${cart.total_items} items totaling ₹${cart.subtotal.toFixed(
+          2
+        )} with Zepto.\n\n` +
+          `• Payment Mode: Cash on Delivery (COD)\n` +
+          `• A delivery partner will be dispatched to your address immediately (~10 mins).\n\n` +
+          `Are you sure you want to place this order now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes, Place Real Order (COD)',
+            style: 'destructive',
+            onPress: () => executeOrder('COD'),
+          },
+        ]
+      );
+    }
   };
 
   return (
@@ -178,6 +243,72 @@ export default function CartScreen() {
             </View>
           </View>
 
+          {/* Payment Method Selector */}
+          <View style={styles.paymentMethodCard}>
+            <Text style={styles.paymentMethodTitle}>Select Payment Method</Text>
+            <View style={styles.paymentMethodOptions}>
+              <TouchableOpacity
+                style={[
+                  styles.paymentOptionButton,
+                  paymentMethod === 'UPI' && styles.paymentOptionSelected,
+                ]}
+                onPress={() => setPaymentMethod('UPI')}
+              >
+                <Text style={styles.paymentOptionIcon}>⚡</Text>
+                <View style={styles.paymentOptionTextContainer}>
+                  <Text
+                    style={[
+                      styles.paymentOptionLabel,
+                      paymentMethod === 'UPI' && styles.paymentOptionTextSelected,
+                    ]}
+                  >
+                    UPI / Online (Juspay)
+                  </Text>
+                  <Text style={styles.paymentOptionSub}>Google Pay, PhonePe, Paytm, BHIM</Text>
+                </View>
+                {paymentMethod === 'UPI' && <Text style={styles.checkIcon}>✓</Text>}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.paymentOptionButton,
+                  paymentMethod === 'COD' && styles.paymentOptionSelected,
+                ]}
+                onPress={() => setPaymentMethod('COD')}
+              >
+                <Text style={styles.paymentOptionIcon}>💵</Text>
+                <View style={styles.paymentOptionTextContainer}>
+                  <Text
+                    style={[
+                      styles.paymentOptionLabel,
+                      paymentMethod === 'COD' && styles.paymentOptionTextSelected,
+                    ]}
+                  >
+                    Cash on Delivery (COD)
+                  </Text>
+                  <Text style={styles.paymentOptionSub}>Pay cash to delivery partner</Text>
+                </View>
+                {paymentMethod === 'COD' && <Text style={styles.checkIcon}>✓</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Active UPI Payment Banner */}
+          {activePaymentLink && (
+            <View style={styles.upiActiveBanner}>
+              <Text style={styles.upiActiveTitle}>⚡ UPI Payment Link Ready</Text>
+              <Text style={styles.upiActiveSubtitle}>
+                Order #{activeOrderCode} initiated. Tap below to complete payment via UPI app:
+              </Text>
+              <TouchableOpacity
+                style={styles.openUpiButton}
+                onPress={() => Linking.openURL(activePaymentLink)}
+              >
+                <Text style={styles.openUpiButtonText}>Open UPI Payment Page ↗</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Philosophy Note */}
           <View style={styles.philosophyBox}>
             <Text style={styles.philosophyText}>
@@ -187,7 +318,10 @@ export default function CartScreen() {
 
           {/* Confirm Order Button */}
           <TouchableOpacity
-            style={styles.confirmButton}
+            style={[
+              styles.confirmButton,
+              paymentMethod === 'UPI' ? styles.confirmButtonUpi : styles.confirmButtonCod,
+            ]}
             onPress={handleExplicitConfirmation}
             disabled={isSubmitting}
           >
@@ -195,7 +329,9 @@ export default function CartScreen() {
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <Text style={styles.confirmButtonText}>
-                Confirm Order (₹{cart.subtotal.toFixed(2)}) →
+                {paymentMethod === 'UPI'
+                  ? `⚡ Confirm & Pay with UPI (₹${cart.subtotal.toFixed(2)}) →`
+                  : `💵 Confirm Order with COD (₹${cart.subtotal.toFixed(2)}) →`}
               </Text>
             )}
           </TouchableOpacity>
@@ -399,20 +535,114 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   confirmButton: {
-    backgroundColor: '#10B981',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: '#10B981',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 4,
+  },
+  confirmButtonUpi: {
+    backgroundColor: '#6366F1',
+    shadowColor: '#6366F1',
+  },
+  confirmButtonCod: {
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
   },
   confirmButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  paymentMethodCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  paymentMethodTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  paymentMethodOptions: {
+    gap: 10,
+  },
+  paymentOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+  },
+  paymentOptionSelected: {
+    borderColor: '#6366F1',
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+  },
+  paymentOptionIcon: {
+    fontSize: 22,
+    marginRight: 12,
+  },
+  paymentOptionTextContainer: {
+    flex: 1,
+  },
+  paymentOptionLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#E2E8F0',
+  },
+  paymentOptionTextSelected: {
+    color: '#A5B4FC',
+  },
+  paymentOptionSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  checkIcon: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#6366F1',
+    marginLeft: 8,
+  },
+  upiActiveBanner: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: '#6366F1',
+  },
+  upiActiveTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#A5B4FC',
+    marginBottom: 4,
+  },
+  upiActiveSubtitle: {
+    fontSize: 12,
+    color: '#CBD5E1',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  openUpiButton: {
+    backgroundColor: '#6366F1',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  openUpiButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

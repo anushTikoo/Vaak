@@ -167,19 +167,55 @@ async def test_cart_checkout_preview_and_confirmation(client):
     cart_res = await client.get("/api/v1/cart")
     assert len(cart_res.json()["items"]) == 1
 
-    # Explicitly confirm checkout
-    confirm_res = await client.post("/api/v1/cart/checkout", json={"confirm_order": True})
+    # Explicitly confirm checkout (COD)
+    confirm_res = await client.post("/api/v1/cart/checkout", json={"confirm_order": True, "payment_method": "COD"})
     assert confirm_res.status_code == 200
     confirm_data = confirm_res.json()
     assert confirm_data["is_preview"] is False
     assert confirm_data["requires_confirmation"] is False
     assert confirm_data["status"] == "confirmed"
+    assert confirm_data["payment_method"] == "COD"
     assert confirm_data["order_id"] is not None
 
     # Cart should be cleared after confirmed order
     empty_cart = await client.get("/api/v1/cart")
     assert empty_cart.json()["items"] == []
     assert empty_cart.json()["total_items"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cart_checkout_upi_flow(client):
+    # Add an item to the cart
+    await client.post(
+        "/api/v1/cart/items",
+        json={"product_id": "z_test_milk", "name": "Amul Milk 1L", "unit_price": 54.0, "quantity": 1},
+    )
+
+    # Preview UPI checkout
+    preview_res = await client.post(
+        "/api/v1/cart/checkout",
+        json={"confirm_order": False, "payment_method": "UPI"},
+    )
+    assert preview_res.status_code == 200
+    preview_data = preview_res.json()
+    assert preview_data["is_preview"] is True
+    assert preview_data["requires_confirmation"] is True
+    assert preview_data["payment_method"] == "UPI"
+
+    # Confirmed UPI checkout
+    upi_confirm_res = await client.post(
+        "/api/v1/cart/checkout",
+        json={"confirm_order": True, "payment_method": "UPI"},
+    )
+    assert upi_confirm_res.status_code == 200
+    upi_data = upi_confirm_res.json()
+    assert upi_data["is_preview"] is False
+    assert upi_data["requires_confirmation"] is False
+    assert upi_data["status"] == "INITIATED"
+    assert upi_data["payment_method"] == "UPI"
+    assert upi_data["payment_link"] is not None
+    assert "payments.juspay.in" in upi_data["payment_link"] or "zeptonow.com" in upi_data["payment_link"]
+
 
 
 @pytest.mark.asyncio

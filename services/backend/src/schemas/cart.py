@@ -66,6 +66,9 @@ class CheckoutResponse(BaseModel):
     is_preview: bool
     status: str
     order_id: str | None = None
+    order_code: str | None = None
+    payment_method: str = "COD"
+    payment_link: str | None = None
     subtotal: float = 0.0
     delivery_fee: float = 0.0
     packaging_fee: float = 0.0

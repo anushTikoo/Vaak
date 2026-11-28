@@ -65,6 +65,9 @@ export interface CheckoutResponse {
   is_preview: boolean;
   status: string;
   order_id?: string | null;
+  order_code?: string | null;
+  payment_method?: 'COD' | 'UPI' | string;
+  payment_link?: string | null;
   subtotal: number;
   delivery_fee: number;
   packaging_fee: number;
@@ -367,6 +370,7 @@ export class VaakApi {
 
   static async checkoutOrder(
     confirm: boolean = false,
+    paymentMethod: 'COD' | 'UPI' = 'COD',
     riderTip: number = 0
   ): Promise<CheckoutResponse> {
     const response = await fetch(`${API_BASE_URL}/api/v1/cart/checkout`, {
@@ -374,7 +378,7 @@ export class VaakApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         confirm_order: confirm,
-        payment_method: 'COD',
+        payment_method: paymentMethod,
         rider_tip: riderTip,
       }),
     });

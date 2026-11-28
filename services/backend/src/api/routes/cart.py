@@ -203,15 +203,18 @@ async def remove_cart_item(item_id: UUID):
 
 @router.post("/checkout", response_model=CheckoutResponse)
 async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
-    """Preview or place an order via Zepto MCP create_order tool.
+    """Preview or place an order via Zepto MCP create_order or create_online_payment_order tool.
 
     Guardrail Policy:
     Spoken AI turns cannot place real orders. Live order confirmation (confirm_order=True)
     is only permitted through an explicit visual touch tap on the Checkout / Confirm button.
     """
+    is_upi = req.payment_method.upper() == "UPI"
+    tool_to_call = "create_online_payment_order" if is_upi else "create_order"
+
     if zepto_client.is_authenticated:
         tool_result = await zepto_client.call_tool(
-            "create_order",
+            tool_to_call,
             {"confirmOrder": req.confirm_order, "riderTip": req.rider_tip},
             enforce_guardrail=not req.confirm_order,
         )
@@ -229,7 +232,7 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
 
         items_out: list[CheckoutItem] = []
         for it in structured.get("items", []):
-            raw_p = float(it.get("price", 0))
+            raw_p = float(it.get("price", 0) or 0.0)
             items_out.append(
                 CheckoutItem(
                     name=it.get("name", "Product"),
@@ -239,13 +242,22 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
                 )
             )
 
-        raw_to_pay = float(structured.get("toPayAmount", 0))
+        summary_data = structured.get("summary") if isinstance(structured.get("summary"), dict) else {}
+        order_id = str(
+            summary_data.get("orderId")
+            or structured.get("orderId")
+            or f"ZEP-{int(time.time())}"
+        )
+        order_code = summary_data.get("orderCode") or structured.get("orderCode")
+        payment_link = structured.get("paymentLink") or summary_data.get("paymentLink")
+
+        raw_to_pay = float(structured.get("toPayAmount") or summary_data.get("toPayAmount") or 0.0)
         to_pay_val = round(raw_to_pay / 100.0, 2) if raw_to_pay >= 500 else round(raw_to_pay, 2)
-        raw_sub = float(structured.get("subTotal", 0))
+        raw_sub = float(structured.get("subTotal") or summary_data.get("itemTotalAmount") or 0.0)
         sub_val = round(raw_sub / 100.0, 2) if raw_sub >= 500 else round(raw_sub, 2)
-        raw_del = float(structured.get("deliveryFee", 0))
+        raw_del = float(structured.get("deliveryFee") or 0.0)
         del_val = round(raw_del / 100.0, 2) if raw_del >= 500 else round(raw_del, 2)
-        raw_pack = float(structured.get("packagingFee", 0))
+        raw_pack = float(structured.get("packagingFee") or 0.0)
         pack_val = round(raw_pack / 100.0, 2) if raw_pack >= 500 else round(raw_pack, 2)
 
         addr = structured.get("deliveryAddress", {})
@@ -253,10 +265,19 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
 
         if req.confirm_order:
             invalidate_cart_cache()
+            status_str = "INITIATED" if is_upi else "confirmed"
+            msg = (
+                "Zepto UPI order created! Complete payment in your UPI app."
+                if is_upi
+                else "Your Zepto order has been placed successfully! Estimated delivery in 10 minutes."
+            )
             return CheckoutResponse(
                 is_preview=False,
-                status="confirmed",
-                order_id=str(structured.get("orderId") or f"ZEP-{int(time.time())}"),
+                status=status_str,
+                order_id=order_id,
+                order_code=order_code,
+                payment_method="UPI" if is_upi else "COD",
+                payment_link=payment_link,
                 subtotal=sub_val,
                 delivery_fee=del_val,
                 packaging_fee=pack_val,
@@ -266,12 +287,21 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
                 delivery_address=addr_text,
                 eta_minutes=structured.get("etaInMinutes") or 10,
                 requires_confirmation=False,
-                message="Your Zepto order has been placed successfully! Estimated delivery in 10 minutes.",
+                message=msg,
             )
 
+        preview_msg = (
+            "Order summary ready with UPI payment. Tap Confirm Order to proceed to UPI."
+            if is_upi
+            else "Order summary ready. Tap Confirm Order to place."
+        )
         return CheckoutResponse(
             is_preview=True,
             status="preview",
+            order_id=order_id,
+            order_code=order_code,
+            payment_method="UPI" if is_upi else "COD",
+            payment_link=payment_link,
             subtotal=sub_val,
             delivery_fee=del_val,
             packaging_fee=pack_val,
@@ -281,7 +311,7 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
             delivery_address=addr_text,
             eta_minutes=structured.get("etaInMinutes") or 10,
             requires_confirmation=True,
-            message="Order summary ready. Tap Confirm Order to place.",
+            message=preview_msg,
         )
 
     # Sandbox / Mock fallback (used during automated tests)
@@ -297,12 +327,27 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
     subtotal = _DEVELOPMENT_CART.subtotal
     total_items = _DEVELOPMENT_CART.total_items
 
+    mock_payment_link = (
+        f"https://payments.juspay.in/mock-upi/order/test_{int(time.time())}"
+        if is_upi
+        else None
+    )
+
     if req.confirm_order:
         _DEVELOPMENT_CART.items.clear()
+        status_str = "INITIATED" if is_upi else "confirmed"
+        msg = (
+            "Zepto UPI order created! Complete payment in your UPI app."
+            if is_upi
+            else "Your Zepto order has been placed successfully! Estimated delivery in 10 minutes."
+        )
         return CheckoutResponse(
             is_preview=False,
-            status="confirmed",
+            status=status_str,
             order_id=f"ZEP-TEST-{int(time.time())}",
+            order_code=f"ZEP-CODE-{int(time.time()) % 10000}",
+            payment_method="UPI" if is_upi else "COD",
+            payment_link=mock_payment_link,
             subtotal=subtotal,
             delivery_fee=0.0,
             packaging_fee=0.0,
@@ -312,12 +357,14 @@ async def checkout_cart(req: CheckoutRequest = CheckoutRequest()):
             delivery_address="Home (Test)",
             eta_minutes=10,
             requires_confirmation=False,
-            message="Your Zepto order has been placed successfully! Estimated delivery in 10 minutes.",
+            message=msg,
         )
 
     return CheckoutResponse(
         is_preview=True,
         status="preview",
+        payment_method="UPI" if is_upi else "COD",
+        payment_link=mock_payment_link,
         subtotal=subtotal,
         delivery_fee=0.0,
         packaging_fee=0.0,
